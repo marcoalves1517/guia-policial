@@ -1,5 +1,30 @@
 // Guia de Expediente Policial - Core Logic
 
+// Version control for 100% automatic updates without manual cache clearing
+const CURRENT_APP_VERSION = 'v4.0.0';
+(function autoUpdateCheck() {
+  try {
+    const storedVersion = localStorage.getItem('opc_app_version');
+    if (storedVersion && storedVersion !== CURRENT_APP_VERSION) {
+      console.log('Nova versão detetada! A limpar caches e a atualizar...');
+      localStorage.setItem('opc_app_version', CURRENT_APP_VERSION);
+      localStorage.removeItem('opc_expedientes_data');
+      localStorage.removeItem('opc_artigos_data');
+      if ('caches' in window) {
+        caches.keys().then((keys) => {
+          return Promise.all(keys.map(k => caches.delete(k)));
+        }).then(() => {
+          window.location.reload();
+        });
+        return;
+      }
+    }
+    localStorage.setItem('opc_app_version', CURRENT_APP_VERSION);
+  } catch (err) {
+    console.warn('Erro na verificação de versão:', err);
+  }
+})();
+
 let allExpedientes = [];
 let allArtigos = [];
 
@@ -852,11 +877,22 @@ if ('serviceWorker' in navigator) {
   });
 
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('sw.js')
+    navigator.serviceWorker.register('sw.js?v=4.0')
       .then(reg => {
         console.log('ServiceWorker registado com sucesso:', reg.scope);
-        // Forçar verificação de nova versão no GitHub
+        // Forçar verificação imediata no servidor do GitHub
         reg.update();
+
+        reg.addEventListener('updatefound', () => {
+          const newWorker = reg.installing;
+          if (newWorker) {
+            newWorker.addEventListener('statechange', () => {
+              if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
+                newWorker.postMessage({ action: 'skipWaiting' });
+              }
+            });
+          }
+        });
       })
       .catch(err => console.log('Falha ao registar ServiceWorker:', err));
   });

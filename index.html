@@ -5,6 +5,11 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
   <title>Guia de Expediente Policial - OPC</title>
   
+  <!-- Anti-cache meta tags for immediate updates -->
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+  <meta http-equiv="Pragma" content="no-cache">
+  <meta http-equiv="Expires" content="0">
+  
   <!-- Mobile & PWA meta tags -->
   <meta name="theme-color" content="#0b1329">
   <meta name="apple-mobile-web-app-capable" content="yes">
@@ -14,13 +19,13 @@
   <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
   <link rel="apple-touch-icon" href="icon-192.png">
 
-  <!-- Stylesheet -->
-  <link rel="stylesheet" href="styles.css">
+  <!-- Stylesheet (versioned for auto-refresh) -->
+  <link rel="stylesheet" href="styles.css?v=4.0">
 </head>
 <body>
 
   <!-- ========================================== -->
-  <!-- 1. SECURITY ACCESS GATE (PIN: pinhalnovo)  -->
+  <!-- 1. SECURITY ACCESS GATE                    -->
   <!-- ========================================== -->
   <div id="securityGate" class="security-gate">
     <div class="security-box">
@@ -38,7 +43,8 @@
         <div id="gateError" class="gate-error">Código de acesso incorreto!</div>
         <button type="submit" class="gate-btn">Desbloquear Guia</button>
       </form>
-      <div class="gate-hint">Código de acesso configurado: <strong>pinhalnovo</strong></div>
+      <div class="gate-hint">Uso reservado a pessoal autorizado</div>
+      <div class="signature-tag subtle">armadilha</div>
     </div>
   </div>
 
@@ -401,7 +407,12 @@
     <span id="toastMsg">Mensagem</span>
   </div>
 
-  <!-- App Script -->
-  <script src="app.js"></script>
+  <!-- App Signature Watermark -->
+  <footer style="padding: 20px 0 60px 0;">
+    <div class="signature-tag">armadilha</div>
+  </footer>
+
+  <!-- App Script (versioned for auto-refresh) -->
+  <script src="app.js?v=4.0"></script>
 </body>
 </html>
