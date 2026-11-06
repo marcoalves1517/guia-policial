@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="pt-PT">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <title>Guia de Expediente Policial - OPC</title>
+  
+  <!-- Mobile & PWA meta tags -->
+  <meta name="theme-color" content="#0b1329">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Guia Policial">
+  <link rel="manifest" href="manifest.json">
+  <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
+  <link rel="apple-touch-icon" href="icon-192.png">
+
+  <!-- Stylesheet -->
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+  <!-- ========================================== -->
+  <!-- 1. SECURITY ACCESS GATE (PIN PROTECTED)    -->
+  <!-- ========================================== -->
+  <div id="securityGate" class="security-gate">
+    <div class="security-box">
+      <div class="gate-shield-icon">
+        <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+          <path d="m9 12 2 2 4-4"/>
+        </svg>
+      </div>
+      <h2 class="gate-title">Acesso Restrito</h2>
+      <p class="gate-subtitle">Uso operacional reservado. Introduza o código de acesso para desbloquear o guia.</p>
+      
+      <form id="pinForm" onsubmit="handlePinSubmit(event)">
+        <input type="password" id="pinInput" class="pin-input" placeholder="••••" autocomplete="off" inputmode="numeric" autofocus>
+        <div id="gateError" class="gate-error">Código de acesso incorreto!</div>
+        <button type="submit" class="gate-btn">Desbloquear Guia</button>
+      </form>
+      <div class="gate-hint">Código padrão inicial: <strong>GNR2025</strong> (pode alterar nas definições)</div>
+    </div>
+  </div>
+
+  <!-- ========================================== -->
+  <!-- 2. MAIN APPLICATION                        -->
+  <!-- ========================================== -->
+  <div id="appContainer">
+
+    <!-- Header -->
+    <header class="app-header">
+      <div class="header-top">
+        <div class="brand-wrapper">
+          <img src="icon-192.png" alt="Logo" class="brand-logo">
+          <div>
+            <div class="brand-title">
+              Guia Policial <span class="brand-badge">OPC</span>
+            </div>
+          </div>
+        </div>
+        <div class="header-actions">
+          <button id="favFilterBtn" class="icon-btn" title="Favoritos / Guardados" onclick="toggleFavoritesFilter()">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon>
+            </svg>
+          </button>
+          <button id="syncBtn" class="icon-btn" title="Sincronizar Atualizações" onclick="syncData(true)">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/>
+            </svg>
+          </button>
+          <button class="icon-btn" title="Definições" onclick="openSettings()">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="12" r="3"></circle>
+              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+            </svg>
+          </button>
+          <button class="icon-btn" title="Bloquear Aplicação" onclick="lockApp()">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+              <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+            </svg>
+          </button>
+        </div>
+      </div>
+
+      <!-- Status Indicator bar -->
+      <div class="status-bar">
+        <div class="status-indicator">
+          <span id="networkDot" class="dot"></span>
+          <span id="networkStatusText">Online</span>
+        </div>
+        <div id="dataVersionText">60 Procedimentos Atualizados</div>
+      </div>
+    </header>
+
+    <!-- Search Input -->
+    <div class="search-container">
+      <div class="search-input-wrapper">
+        <span class="search-icon">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="11" cy="11" r="8"></circle>
+            <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+          </svg>
+        </span>
+        <input 
+          type="search" 
+          id="searchInput" 
+          class="search-input" 
+          placeholder="Pesquisar por crime, artigo (ex: 152, 292), droga, arma..." 
+          oninput="handleSearch(this.value)"
+        >
+        <button id="clearSearchBtn" class="clear-search-btn" onclick="clearSearch()">&times;</button>
+      </div>
+    </div>
+
+    <!-- Category Pills Scroll -->
+    <div class="categories-scroll" id="categoriesBar">
+      <!-- Populated via JS -->
+    </div>
+
+    <!-- Natureza Sub-filter -->
+    <div class="sub-filters">
+      <button class="sub-pill active" onclick="setNatureFilter('all', this)">Todos</button>
+      <button class="sub-pill" onclick="setNatureFilter('Público', this)">Crimes Públicos</button>
+      <button class="sub-pill" onclick="setNatureFilter('Semipúblico', this)">Crimes Semipúblicos</button>
+    </div>
+
+    <!-- Main List Container -->
+    <main class="main-content">
+      <div class="results-count">
+        <span id="resultsCount">A carregar...</span>
+        <span id="activeFilterLabel"></span>
+      </div>
+      <div class="crime-list" id="crimeList">
+        <!-- Crime Cards rendered via JS -->
+      </div>
+    </main>
+
+  </div>
+
+  <!-- ========================================== -->
+  <!-- 3. PROCEDURE DETAIL VIEW (FULL-SCREEN MODAL)-->
+  <!-- ========================================== -->
+  <div id="detailModal" class="modal-overlay">
+    <div class="detail-container">
+      
+      <!-- Detail Nav -->
+      <nav class="detail-nav">
+        <button class="back-btn" onclick="closeDetail()">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+            <polyline points="15 18 9 12 15 6"></polyline>
+          </svg>
+          Voltar
+        </button>
+        <button id="detailStarBtn" class="icon-btn" onclick="toggleCurrentFavorite()">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon>
+          </svg>
+        </button>
+      </nav>
+
+      <!-- Detail Body -->
+      <div class="detail-content" id="detailBody">
+        <!-- Rendered by renderDetail(item) in JS -->
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ========================================== -->
+  <!-- 4. SETTINGS MODAL                          -->
+  <!-- ========================================== -->
+  <div id="settingsModal" class="settings-modal" onclick="closeSettingsOnBackdrop(event)">
+    <div class="settings-content">
+      <div class="settings-title">
+        <span>Definições & Sincronização</span>
+        <button class="icon-btn" onclick="closeSettings()">&times;</button>
+      </div>
+
+      <div class="settings-row">
+        <label class="settings-label">Código de Acesso (PIN Atual)</label>
+        <input type="text" id="settingsPinInput" class="settings-input" placeholder="Introduza novo PIN">
+        <button class="btn-primary" style="margin-top: 8px; padding: 10px;" onclick="saveNewPin()">Atualizar Código de Acesso</button>
+      </div>
+
+      <div class="settings-row" style="margin-top: 20px;">
+        <label class="settings-label">URL da Base de Dados na Nuvem (Sync)</label>
+        <input type="text" id="settingsSyncUrl" class="settings-input" placeholder="expedientes.json">
+        <div style="font-size: 0.72rem; color: var(--text-muted); margin-top: 4px;">
+          Pode colocar o link RAW do seu GitHub para atualizar automaticamente os dados de todos os seus colegas.
+        </div>
+      </div>
+
+      <div class="settings-row" style="margin-top: 20px; display: flex; gap: 8px;">
+        <button class="btn-primary" onclick="syncData(true)">Forçar Sincronização Agora</button>
+        <button class="btn-secondary" onclick="resetAppData()">Limpar Cache</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ========================================== -->
+  <!-- 5. TOAST NOTIFICATION                      -->
+  <!-- ========================================== -->
+  <div id="toast" class="toast">
+    <span id="toastMsg">Mensagem</span>
+  </div>
+
+  <!-- App Script -->
+  <script src="app.js"></script>
+</body>
+</html>
