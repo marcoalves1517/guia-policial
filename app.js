@@ -838,13 +838,26 @@ function showToast(msg) {
 }
 
 // ---------------------------------------------------------------------
-// PWA Service Worker Registration
+// PWA Service Worker Registration & Auto-Update
 // ---------------------------------------------------------------------
 
 if ('serviceWorker' in navigator) {
+  let refreshing = false;
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (!refreshing) {
+      refreshing = true;
+      console.log('Nova versão ativada! A recarregar automaticamente...');
+      window.location.reload();
+    }
+  });
+
   window.addEventListener('load', () => {
     navigator.serviceWorker.register('sw.js')
-      .then(reg => console.log('ServiceWorker registado com sucesso:', reg.scope))
+      .then(reg => {
+        console.log('ServiceWorker registado com sucesso:', reg.scope);
+        // Forçar verificação de nova versão no GitHub
+        reg.update();
+      })
       .catch(err => console.log('Falha ao registar ServiceWorker:', err));
   });
 }

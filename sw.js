@@ -1,4 +1,4 @@
-const CACHE_NAME = 'guia-policial-v2';
+const CACHE_NAME = 'guia-policial-v3';
 const ASSETS_TO_CACHE = [
   './',
   './index.html',
@@ -11,22 +11,24 @@ const ASSETS_TO_CACHE = [
   './icon-512.png'
 ];
 
-// Install: Cache core assets
+// Install: Cache core assets and activate immediately
 self.addEventListener('install', (event) => {
+  self.skipWaiting();
   event.waitUntil(
     caches.open(CACHE_NAME).then((cache) => {
       return cache.addAll(ASSETS_TO_CACHE);
-    }).then(() => self.skipWaiting())
+    })
   );
 });
 
-// Activate: Clean old caches
+// Activate: Delete old caches and claim clients immediately
 self.addEventListener('activate', (event) => {
   event.waitUntil(
     caches.keys().then((keys) => {
       return Promise.all(
         keys.map((key) => {
           if (key !== CACHE_NAME) {
+            console.log('Removendo cache antigo:', key);
             return caches.delete(key);
           }
         })
@@ -35,42 +37,43 @@ self.addEventListener('activate', (event) => {
   );
 });
 
-// Fetch: Network first for JSON databases, Cache first for assets, fallback to cache
+// Fetch: Network First for HTML and JSON, Cache First for static images/icons
 self.addEventListener('fetch', (event) => {
-  const url = new URL(event.request.url);
+  const req = event.request;
+  const url = new URL(req.url);
 
-  // If requesting JSON databases (expedientes.json or artigos_opc.json), try network first to get updates, fallback to cache
-  if (url.pathname.endsWith('expedientes.json') || url.pathname.endsWith('artigos_opc.json')) {
+  // 1. HTML / Navigation / JSON databases -> NETWORK FIRST (fallback to offline cache)
+  const isHtml = req.mode === 'navigate' || url.pathname.endsWith('.html') || url.pathname.endsWith('/');
+  const isData = url.pathname.endsWith('expedientes.json') || url.pathname.endsWith('artigos_opc.json');
+  const isCode = url.pathname.endsWith('app.js') || url.pathname.endsWith('styles.css');
+
+  if (isHtml || isData || isCode) {
     event.respondWith(
-      fetch(event.request)
+      fetch(req)
         .then((networkResponse) => {
-          if (networkResponse.status === 200) {
-            const responseClone = networkResponse.clone();
-            caches.open(CACHE_NAME).then((cache) => {
-              cache.put(event.request, responseClone);
-            });
+          if (networkResponse && networkResponse.status === 200) {
+            const copy = networkResponse.clone();
+            caches.open(CACHE_NAME).then((cache) => cache.put(req, copy));
           }
           return networkResponse;
         })
-        .catch(() => caches.match(event.request))
+        .catch(() => caches.match(req).then((cached) => {
+          if (cached) return cached;
+          if (isHtml) return caches.match('./index.html');
+        }))
     );
     return;
   }
 
-  // Standard static assets: cache-first with network fallback
+  // 2. Images & Manifest -> CACHE FIRST (fallback to network)
   event.respondWith(
-    caches.match(event.request).then((cachedResponse) => {
-      if (cachedResponse) {
-        return cachedResponse;
-      }
-      return fetch(event.request).then((networkResponse) => {
-        if (!networkResponse || networkResponse.status !== 200 || networkResponse.type !== 'basic') {
-          return networkResponse;
+    caches.match(req).then((cached) => {
+      if (cached) return cached;
+      return fetch(req).then((networkResponse) => {
+        if (networkResponse && networkResponse.status === 200) {
+          const copy = networkResponse.clone();
+          caches.open(CACHE_NAME).then((cache) => cache.put(req, copy));
         }
-        const responseToCache = networkResponse.clone();
-        caches.open(CACHE_NAME).then((cache) => {
-          cache.put(event.request, responseToCache);
-        });
         return networkResponse;
       });
     })
