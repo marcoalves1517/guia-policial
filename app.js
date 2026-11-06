@@ -1,12 +1,14 @@
-// Guia de Expediente Policial - Core Logic
+// Guia de Expediente Policial - Core Logic & Authentication Engine
 
-// Version control for 100% automatic updates without manual cache clearing
-const CURRENT_APP_VERSION = 'v4.0.0';
+// =========================================================================
+// 1. AUTO-UPDATE & ANTI-CACHE ENGINE (v5.0.0)
+// =========================================================================
+const CURRENT_APP_VERSION = 'v5.0.0';
 (function autoUpdateCheck() {
   try {
     const storedVersion = localStorage.getItem('opc_app_version');
     if (storedVersion && storedVersion !== CURRENT_APP_VERSION) {
-      console.log('Nova versão detetada! A limpar caches e a atualizar...');
+      console.log('Nova versão detetada! A atualizar cache automaticamente...');
       localStorage.setItem('opc_app_version', CURRENT_APP_VERSION);
       localStorage.removeItem('opc_expedientes_data');
       localStorage.removeItem('opc_artigos_data');
@@ -25,6 +27,7 @@ const CURRENT_APP_VERSION = 'v4.0.0';
   }
 })();
 
+// Data Arrays
 let allExpedientes = [];
 let allArtigos = [];
 
@@ -42,17 +45,52 @@ let currentArtigoTheme = 'all';
 let currentArtigoSearch = '';
 const expandedArticles = new Set();
 
-// Security PIN Configuration
-const DEFAULT_PIN = 'pinhalnovo';
+// =========================================================================
+// 2. AUTHENTICATION & USER MANAGEMENT STATE
+// =========================================================================
+const DEFAULT_ADMIN_PASS = 'pinhalnovo';
 
-function getStoredPin() {
-  const stored = localStorage.getItem('opc_app_pin');
-  // Auto-migrate legacy default PIN
-  if (!stored || stored.toUpperCase() === 'GNR2025') {
-    localStorage.setItem('opc_app_pin', DEFAULT_PIN);
-    return DEFAULT_PIN;
+function getAdminPassword() {
+  return localStorage.getItem('opc_admin_password') || DEFAULT_ADMIN_PASS;
+}
+
+function getUsers() {
+  try {
+    return JSON.parse(localStorage.getItem('opc_users_db') || '[]');
+  } catch {
+    return [];
   }
-  return stored;
+}
+
+function saveUsers(users) {
+  localStorage.setItem('opc_users_db', JSON.stringify(users));
+  syncUsersToCloud(users);
+}
+
+function getInviteCodes() {
+  try {
+    return JSON.parse(localStorage.getItem('opc_invites_db') || '[]');
+  } catch {
+    return [];
+  }
+}
+
+function saveInviteCodes(codes) {
+  localStorage.setItem('opc_invites_db', JSON.stringify(codes));
+}
+
+function getCurrentUser() {
+  try {
+    return JSON.parse(localStorage.getItem('opc_current_user') || 'null');
+  } catch {
+    return null;
+  }
+}
+
+function setCurrentUser(userObj) {
+  localStorage.setItem('opc_current_user', JSON.stringify(userObj));
+  localStorage.setItem('opc_unlocked', 'true');
+  applyUserSession(userObj);
 }
 
 function isAppUnlocked() {
@@ -60,37 +98,519 @@ function isAppUnlocked() {
 }
 
 function unlockApp() {
-  localStorage.setItem('opc_unlocked', 'true');
   document.getElementById('securityGate').style.display = 'none';
 }
 
-function lockApp() {
+function logoutApp() {
   localStorage.removeItem('opc_unlocked');
+  localStorage.removeItem('opc_current_user');
   document.getElementById('securityGate').style.display = 'flex';
-  document.getElementById('pinInput').value = '';
-  document.getElementById('gateError').style.display = 'none';
+  document.getElementById('adminPanelBtn').style.display = 'none';
+  closeAdminModal();
   closeDetail();
   closeSettings();
+  showToast('Sessão terminada.');
 }
 
-function handlePinSubmit(e) {
-  e.preventDefault();
-  const inputPin = document.getElementById('pinInput').value.trim();
-  const validPin = getStoredPin();
+function applyUserSession(user) {
+  unlockApp();
+  const badge = document.getElementById('userRoleBadge');
+  const adminBtn = document.getElementById('adminPanelBtn');
 
-  if (inputPin.toLowerCase() === validPin.toLowerCase()) {
-    unlockApp();
-    showToast('Acesso autorizado! Bem-vindo ao Guia.');
+  if (user && user.role === 'admin') {
+    if (badge) {
+      badge.textContent = 'ADMIN';
+      badge.className = 'admin-badge';
+    }
+    if (adminBtn) adminBtn.style.display = 'flex';
   } else {
-    document.getElementById('gateError').style.display = 'block';
-    document.getElementById('pinInput').value = '';
-    document.getElementById('pinInput').focus();
+    if (badge) {
+      badge.textContent = user ? (user.role || 'OPC') : 'OPC';
+      badge.className = 'brand-badge';
+    }
+    if (adminBtn) adminBtn.style.display = 'none';
   }
 }
 
 // ---------------------------------------------------------------------
-// Main Navigation Tabs
+// Auth Portal Tabs & Submissions
 // ---------------------------------------------------------------------
+
+function switchAuthTab(tab) {
+  document.querySelectorAll('.auth-tab-btn').forEach(b => b.classList.remove('active'));
+  document.querySelectorAll('.auth-form-panel').forEach(p => p.classList.remove('active'));
+
+  hideGateMessages();
+
+  if (tab === 'direct') {
+    document.getElementById('authTabDirect').classList.add('active');
+    document.getElementById('panelDirect').classList.add('active');
+  } else if (tab === 'login') {
+    document.getElementById('authTabLogin').classList.add('active');
+    document.getElementById('panelLogin').classList.add('active');
+  } else if (tab === 'register') {
+    document.getElementById('authTabRegister').classList.add('active');
+    document.getElementById('panelRegister').classList.add('active');
+  }
+}
+
+function showGateError(msg) {
+  const el = document.getElementById('gateError');
+  el.textContent = msg;
+  el.style.display = 'block';
+  document.getElementById('gateSuccess').style.display = 'none';
+}
+
+function showGateSuccess(msg) {
+  const el = document.getElementById('gateSuccess');
+  el.textContent = msg;
+  el.style.display = 'block';
+  document.getElementById('gateError').style.display = 'none';
+}
+
+function hideGateMessages() {
+  document.getElementById('gateError').style.display = 'none';
+  document.getElementById('gateSuccess').style.display = 'none';
+}
+
+// 1. Direct Submit: Admin Password or Invite Code
+function handleDirectSubmit(e) {
+  e.preventDefault();
+  const input = document.getElementById('directPinInput').value.trim();
+  if (!input) return;
+
+  const adminPass = getAdminPassword();
+
+  // Check Admin Master Passwords
+  if (input.toLowerCase() === adminPass.toLowerCase() || input.toLowerCase() === 'admin.pinhalnovo' || input.toLowerCase() === 'pinhalnovo') {
+    const adminUser = {
+      id: 'admin_root',
+      name: 'Administrador Marco',
+      role: 'admin',
+      email: 'admin@local'
+    };
+    setCurrentUser(adminUser);
+    showToast('Bem-vindo, Administrador Marco!');
+    return;
+  }
+
+  // Check Invite Codes generated by Admin
+  const invites = getInviteCodes();
+  const matchedInvite = invites.find(inv => inv.code.toUpperCase() === input.toUpperCase() && inv.active);
+
+  if (matchedInvite) {
+    const inviteUser = {
+      id: 'inv_' + matchedInvite.code,
+      name: matchedInvite.label || 'Colega Autorizado',
+      role: 'OPC',
+      inviteCode: matchedInvite.code
+    };
+    setCurrentUser(inviteUser);
+    showToast(`Acesso concedido com convite: ${matchedInvite.label}`);
+    return;
+  }
+
+  showGateError('Código ou senha incorreta!');
+  document.getElementById('directPinInput').value = '';
+}
+
+// 2. User Account Login
+function handleAccountLogin(e) {
+  e.preventDefault();
+  const contact = document.getElementById('loginEmail').value.trim().toLowerCase();
+  const pass = document.getElementById('loginPassword').value;
+
+  if (!contact || !pass) {
+    showGateError('Por favor preencha todos os campos.');
+    return;
+  }
+
+  // Fetch from cloud if configured
+  fetchUsersFromCloud().then(() => {
+    const users = getUsers();
+    const user = users.find(u => u.contact.toLowerCase() === contact || u.email.toLowerCase() === contact);
+
+    if (!user) {
+      showGateError('Conta não encontrada! Se ainda não se registou, vá à aba "Pedir Acesso".');
+      return;
+    }
+
+    if (user.password !== pass) {
+      showGateError('Palavra-passe incorreta!');
+      return;
+    }
+
+    if (user.status === 'pending') {
+      showGateError('A sua conta aguarda validação pelo Administrador Marco. Solicite-lhe a aprovação no WhatsApp.');
+      return;
+    }
+
+    if (user.status === 'rejected') {
+      showGateError('Acesso recusado pelo Administrador.');
+      return;
+    }
+
+    if (user.status === 'approved') {
+      setCurrentUser(user);
+      showToast(`Bem-vindo, ${user.name}!`);
+    }
+  });
+}
+
+// 3. User Registration / Request
+function handleAccountRegister(e) {
+  e.preventDefault();
+  const name = document.getElementById('regName').value.trim();
+  const role = document.getElementById('regRole').value.trim();
+  const contact = document.getElementById('regContact').value.trim().toLowerCase();
+  const password = document.getElementById('regPassword').value;
+
+  if (!name || !role || !contact || !password) {
+    showGateError('Preencha todos os campos obrigatórios.');
+    return;
+  }
+
+  const users = getUsers();
+  const exists = users.find(u => u.contact.toLowerCase() === contact || u.email.toLowerCase() === contact);
+
+  if (exists) {
+    showGateError('Já existe um pedido ou conta com este email/contacto!');
+    return;
+  }
+
+  const newUser = {
+    id: 'usr_' + Date.now(),
+    name,
+    role,
+    contact,
+    email: contact,
+    password,
+    status: 'pending',
+    createdAt: new Date().toISOString()
+  };
+
+  users.push(newUser);
+  saveUsers(users);
+
+  showGateSuccess('Pedido submetido com sucesso! O Administrador irá validar o seu acesso.');
+
+  // Prepare WhatsApp verification link
+  const waBlock = document.getElementById('regWhatsappBlock');
+  const waLink = document.getElementById('regWhatsappLink');
+  const msg = encodeURIComponent(`Olá Marco! Criei conta no Guia Policial (OPC):\nNome: ${name}\nPosto: ${role}\nContacto: ${contact}\nPodes aprovar o meu acesso no teu painel?`);
+  
+  waLink.href = `https://wa.me/?text=${msg}`;
+  waBlock.style.display = 'block';
+
+  // Reset form
+  document.getElementById('regName').value = '';
+  document.getElementById('regRole').value = '';
+  document.getElementById('regContact').value = '';
+  document.getElementById('regPassword').value = '';
+}
+
+// =========================================================================
+// 3. PAINEL DE ADMINISTRAÇÃO (EXCLUSIVO MARCO)
+// =========================================================================
+
+function openAdminModal() {
+  const modal = document.getElementById('adminModal');
+  if (!modal) return;
+  modal.classList.add('open');
+  fetchUsersFromCloud();
+  renderAdminDashboard();
+}
+
+function closeAdminModal() {
+  const modal = document.getElementById('adminModal');
+  if (modal) modal.classList.remove('open');
+}
+
+function closeAdminOnBackdrop(e) {
+  if (e.target.id === 'adminModal') closeAdminModal();
+}
+
+function switchAdminTab(tab) {
+  document.querySelectorAll('.admin-tab').forEach(b => b.classList.remove('active'));
+  document.getElementById('adminViewPending').style.display = tab === 'pending' ? 'block' : 'none';
+  document.getElementById('adminViewApproved').style.display = tab === 'approved' ? 'block' : 'none';
+  document.getElementById('adminViewInvites').style.display = tab === 'invites' ? 'block' : 'none';
+  document.getElementById('adminViewSecurity').style.display = tab === 'security' ? 'block' : 'none';
+
+  if (tab === 'pending') document.getElementById('adminTabPending').classList.add('active');
+  if (tab === 'approved') document.getElementById('adminTabApproved').classList.add('active');
+  if (tab === 'invites') document.getElementById('adminTabInvites').classList.add('active');
+  if (tab === 'security') document.getElementById('adminTabSecurity').classList.add('active');
+
+  renderAdminDashboard();
+}
+
+function renderAdminDashboard() {
+  const users = getUsers();
+  const pending = users.filter(u => u.status === 'pending');
+  const approved = users.filter(u => u.status === 'approved');
+
+  // Update badge counters
+  const pendCount = document.getElementById('adminPendingCount');
+  const appCount = document.getElementById('adminApprovedCount');
+  if (pendCount) pendCount.textContent = pending.length;
+  if (appCount) appCount.textContent = approved.length;
+
+  // Render Pending List
+  const pendContainer = document.getElementById('adminPendingList');
+  if (pendContainer) {
+    if (pending.length === 0) {
+      pendContainer.innerHTML = `
+        <div style="text-align: center; padding: 24px; color: var(--text-muted);">
+          Nenhum pedido de conta pendente no momento.
+        </div>
+      `;
+    } else {
+      pendContainer.innerHTML = pending.map(u => `
+        <div class="user-card">
+          <div class="user-card-header">
+            <span class="user-name">${u.name}</span>
+            <span class="badge badge-pending">Pendente</span>
+          </div>
+          <div class="user-meta">
+            <span>🎖️ ${u.role}</span>
+            <span>📱 ${u.contact}</span>
+            <span>📅 ${new Date(u.createdAt).toLocaleDateString('pt-PT')}</span>
+          </div>
+          <div class="user-actions">
+            <button class="btn-approve" onclick="adminApproveUser('${u.id}')">✓ Aceitar & Ativar</button>
+            <button class="btn-reject" onclick="adminRejectUser('${u.id}')">✕ Rejeitar</button>
+          </div>
+        </div>
+      `).join('');
+    }
+  }
+
+  // Render Approved List
+  const appContainer = document.getElementById('adminApprovedList');
+  if (appContainer) {
+    if (approved.length === 0) {
+      appContainer.innerHTML = `
+        <div style="text-align: center; padding: 24px; color: var(--text-muted);">
+          Nenhum utilizador com conta registada aprovada.
+        </div>
+      `;
+    } else {
+      appContainer.innerHTML = approved.map(u => `
+        <div class="user-card">
+          <div class="user-card-header">
+            <span class="user-name">${u.name}</span>
+            <span class="badge badge-approved">Aprovado</span>
+          </div>
+          <div class="user-meta">
+            <span>🎖️ ${u.role}</span>
+            <span>📱 ${u.contact}</span>
+          </div>
+          <div class="user-actions">
+            <button class="btn-reject" onclick="adminRevokeUser('${u.id}')">🔒 Bloquear Acesso</button>
+            <button class="btn-secondary" style="padding: 4px 10px; font-size: 0.75rem;" onclick="adminDeleteUser('${u.id}')">🗑️ Eliminar</button>
+          </div>
+        </div>
+      `).join('');
+    }
+  }
+
+  // Render Invites List
+  renderAdminInvites();
+}
+
+function adminApproveUser(id) {
+  const users = getUsers();
+  const u = users.find(x => x.id === id);
+  if (u) {
+    u.status = 'approved';
+    saveUsers(users);
+    renderAdminDashboard();
+    showToast(`Conta de ${u.name} APROVADA com sucesso!`);
+  }
+}
+
+function adminRejectUser(id) {
+  const users = getUsers();
+  const u = users.find(x => x.id === id);
+  if (u) {
+    u.status = 'rejected';
+    saveUsers(users);
+    renderAdminDashboard();
+    showToast(`Pedido de ${u.name} rejeitado.`);
+  }
+}
+
+function adminRevokeUser(id) {
+  const users = getUsers();
+  const u = users.find(x => x.id === id);
+  if (u) {
+    u.status = 'rejected';
+    saveUsers(users);
+    renderAdminDashboard();
+    showToast(`Acesso de ${u.name} bloqueado.`);
+  }
+}
+
+function adminDeleteUser(id) {
+  if (confirm('Eliminar permanentemente este utilizador?')) {
+    let users = getUsers();
+    users = users.filter(x => x.id !== id);
+    saveUsers(users);
+    renderAdminDashboard();
+    showToast('Utilizador eliminado.');
+  }
+}
+
+// ---------------------------------------------------------------------
+// Invite Code Generator (VIP Access without Account creation)
+// ---------------------------------------------------------------------
+
+function renderAdminInvites() {
+  const container = document.getElementById('adminInvitesList');
+  if (!container) return;
+
+  const invites = getInviteCodes();
+  if (invites.length === 0) {
+    container.innerHTML = `
+      <div style="text-align: center; padding: 20px; color: var(--text-muted);">
+        Nenhum código de convite ativo. Crie um acima para partilhar.
+      </div>
+    `;
+    return;
+  }
+
+  container.innerHTML = invites.map(inv => `
+    <div class="user-card">
+      <div class="user-card-header">
+        <span style="font-size: 1.1rem; font-weight: 800; color: var(--accent-cyan); letter-spacing: 2px;">
+          ${inv.code}
+        </span>
+        <span class="badge ${inv.active ? 'badge-approved' : 'badge-rejected'}">
+          ${inv.active ? 'Ativo' : 'Revogado'}
+        </span>
+      </div>
+      <div style="font-size: 0.82rem; color: var(--text-secondary);">
+        Para: <strong>${inv.label}</strong> • Criado em: ${new Date(inv.createdAt).toLocaleDateString('pt-PT')}
+      </div>
+      <div class="user-actions">
+        <button class="btn-whatsapp" onclick="copyInviteToWhatsapp('${inv.code}', '${inv.label}')">
+          💬 Partilhar no WhatsApp
+        </button>
+        <button class="btn-secondary" style="padding: 6px 12px; font-size: 0.78rem;" onclick="toggleInviteActive('${inv.code}')">
+          ${inv.active ? 'Desativar' : 'Reativar'}
+        </button>
+      </div>
+    </div>
+  `).join('');
+}
+
+function createInviteCode() {
+  const labelInput = document.getElementById('newInviteLabel');
+  const label = labelInput.value.trim() || 'Colega';
+
+  // Generate 6-char clean alphanumeric code
+  const randomStr = Math.floor(1000 + Math.random() * 9000);
+  const code = `OPC-${randomStr}`;
+
+  const invites = getInviteCodes();
+  invites.unshift({
+    code,
+    label,
+    active: true,
+    createdAt: new Date().toISOString()
+  });
+
+  saveInviteCodes(invites);
+  labelInput.value = '';
+  renderAdminInvites();
+  showToast(`Código ${code} gerado com sucesso!`);
+}
+
+function toggleInviteActive(code) {
+  const invites = getInviteCodes();
+  const inv = invites.find(i => i.code === code);
+  if (inv) {
+    inv.active = !inv.active;
+    saveInviteCodes(invites);
+    renderAdminInvites();
+    showToast(`Código ${code} ${inv.active ? 'reativado' : 'desativado'}.`);
+  }
+}
+
+function copyInviteToWhatsapp(code, label) {
+  const url = window.location.href.split('?')[0].split('#')[0];
+  const msg = `Olá ${label}! Segue o teu código de acesso exclusivo ao Guia Policial (OPC):\n\n🔑 Código: *${code}*\n📲 Acede aqui: ${url}\n\nAo abrir o link, basta colocar o código no campo inicial para entrar imediatamente!`;
+  
+  if (navigator.clipboard) {
+    navigator.clipboard.writeText(msg).then(() => {
+      window.open(`https://wa.me/?text=${encodeURIComponent(msg)}`, '_blank');
+    });
+  } else {
+    window.open(`https://wa.me/?text=${encodeURIComponent(msg)}`, '_blank');
+  }
+}
+
+// ---------------------------------------------------------------------
+// Admin Security Settings
+// ---------------------------------------------------------------------
+
+function saveAdminPassword() {
+  const input = document.getElementById('newAdminPasswordInput');
+  const newPass = input.value.trim();
+  if (!newPass) {
+    showToast('A senha não pode estar vazia!');
+    return;
+  }
+  localStorage.setItem('opc_admin_password', newPass);
+  input.value = '';
+  showToast('Senha de Administrador alterada com sucesso!');
+}
+
+function saveCloudSyncUrl() {
+  const input = document.getElementById('adminCloudSyncUrl');
+  const url = input.value.trim();
+  localStorage.setItem('opc_cloud_sync_url', url);
+  showToast('URL de sincronização em nuvem guardado!');
+  fetchUsersFromCloud();
+}
+
+async function syncUsersToCloud(users) {
+  const cloudUrl = localStorage.getItem('opc_cloud_sync_url');
+  if (!cloudUrl) return;
+
+  try {
+    await fetch(cloudUrl, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(users)
+    });
+  } catch (err) {
+    console.warn('Erro ao sincronizar com nuvem:', err);
+  }
+}
+
+async function fetchUsersFromCloud() {
+  const cloudUrl = localStorage.getItem('opc_cloud_sync_url');
+  if (!cloudUrl) return;
+
+  try {
+    const res = await fetch(cloudUrl);
+    if (res.ok) {
+      const remoteUsers = await res.json();
+      if (Array.isArray(remoteUsers)) {
+        localStorage.setItem('opc_users_db', JSON.stringify(remoteUsers));
+        renderAdminDashboard();
+      }
+    }
+  } catch (err) {
+    console.warn('Erro ao ler da nuvem:', err);
+  }
+}
+
+// =========================================================================
+// 4. MAIN NAVIGATION TABS (EXPEDIENTES | ARTIGOS | PRAZOS)
+// =========================================================================
 
 function switchMainTab(tabName) {
   activeMainTab = tabName;
@@ -111,31 +631,24 @@ function switchMainTab(tabName) {
   }
 }
 
-// ---------------------------------------------------------------------
-// Data Loading & Syncing
-// ---------------------------------------------------------------------
+// =========================================================================
+// 5. DATA LOADING & DATABASES
+// =========================================================================
 
 async function loadAllData() {
-  // 1. Load cached data
   const cachedExp = localStorage.getItem('opc_expedientes_data');
   const cachedArt = localStorage.getItem('opc_artigos_data');
 
   if (cachedExp) {
-    try {
-      allExpedientes = JSON.parse(cachedExp);
-    } catch (e) { console.warn('Erro ao ler cache de expedientes:', e); }
+    try { allExpedientes = JSON.parse(cachedExp); } catch (e) {}
   }
-
   if (cachedArt) {
-    try {
-      allArtigos = JSON.parse(cachedArt);
-    } catch (e) { console.warn('Erro ao ler cache de artigos:', e); }
+    try { allArtigos = JSON.parse(cachedArt); } catch (e) {}
   }
 
   renderUI();
   renderArtigosUI();
 
-  // 2. Fetch fresh data
   await syncData(false);
 }
 
@@ -144,7 +657,7 @@ async function syncData(manual = false) {
   if (syncBtn) syncBtn.classList.add('loading');
 
   try {
-    // Sync Expedientes
+    // 1. Fetch expedientes
     const resExp = await fetch('expedientes.json?t=' + Date.now());
     if (resExp.ok) {
       const dataExp = await resExp.json();
@@ -154,7 +667,7 @@ async function syncData(manual = false) {
       }
     }
 
-    // Sync Artigos OPC
+    // 2. Fetch artigos
     const resArt = await fetch('artigos_opc.json?t=' + Date.now());
     if (resArt.ok) {
       const dataArt = await resArt.json();
@@ -175,7 +688,7 @@ async function syncData(manual = false) {
   } catch (err) {
     console.log('Modo offline ativo ou erro na sincronização:', err);
     if (manual) {
-      showToast('Sem ligação à rede. A utilizar base de dados local guardada.');
+      showToast('Sem ligação à rede. A utilizar cópia local.');
     }
   } finally {
     if (syncBtn) syncBtn.classList.remove('loading');
@@ -207,9 +720,9 @@ function updateOnlineStatus() {
 window.addEventListener('online', updateOnlineStatus);
 window.addEventListener('offline', updateOnlineStatus);
 
-// ---------------------------------------------------------------------
-// Favorites Management
-// ---------------------------------------------------------------------
+// =========================================================================
+// 6. FAVORITES & CHECKLIST STATE
+// =========================================================================
 
 function getFavorites() {
   try {
@@ -220,8 +733,7 @@ function getFavorites() {
 }
 
 function isFavorite(id) {
-  const favs = getFavorites();
-  return favs.includes(id);
+  return getFavorites().includes(id);
 }
 
 function toggleFavorite(id, e) {
@@ -246,10 +758,6 @@ function toggleFavoritesFilter() {
   renderCrimeList();
 }
 
-// ---------------------------------------------------------------------
-// Checklist Memory (Persistent Per Procedure)
-// ---------------------------------------------------------------------
-
 function getChecklistState(itemId) {
   try {
     return JSON.parse(localStorage.getItem(`opc_check_${itemId}`) || '{}');
@@ -264,26 +772,17 @@ function toggleChecklistItem(itemId, idx, checked) {
   localStorage.setItem(`opc_check_${itemId}`, JSON.stringify(state));
   
   const el = document.getElementById(`checkItem-${idx}`);
-  if (el) {
-    el.classList.toggle('done', checked);
-  }
+  if (el) el.classList.toggle('done', checked);
 }
-
-// ---------------------------------------------------------------------
-// Utilities
-// ---------------------------------------------------------------------
 
 function normalizeText(str) {
   if (!str) return '';
-  return str.toString()
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toLowerCase();
+  return str.toString().normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
 }
 
-// ---------------------------------------------------------------------
-// VIEW 1: EXPEDIENTES LOGIC
-// ---------------------------------------------------------------------
+// =========================================================================
+// 7. EXPEDIENTES RENDERING
+// =========================================================================
 
 function handleSearch(val) {
   currentSearch = val;
@@ -385,7 +884,6 @@ function renderCrimeList() {
       <div style="text-align: center; padding: 40px 20px; color: var(--text-muted);">
         <div style="font-size: 2rem; margin-bottom: 8px;">🔍</div>
         <div style="font-weight: 600; color: #fff;">Nenhum procedimento encontrado</div>
-        <div style="font-size: 0.85rem; margin-top: 4px;">Tente pesquisar por outro crime, número de artigo ou limpe os filtros.</div>
       </div>
     `;
     return;
@@ -431,9 +929,9 @@ function renderUI() {
   updateStatusDisplay();
 }
 
-// ---------------------------------------------------------------------
-// VIEW 2: ARTIGOS & PRONTUÁRIO OPC LOGIC
-// ---------------------------------------------------------------------
+// =========================================================================
+// 8. PRONTUÁRIO & ARTIGOS RENDERING
+// =========================================================================
 
 function handleArtigosSearch(val) {
   currentArtigoSearch = val;
@@ -536,7 +1034,6 @@ function renderArtigosList() {
       <div style="text-align: center; padding: 40px 20px; color: var(--text-muted);">
         <div style="font-size: 2rem; margin-bottom: 8px;">📖</div>
         <div style="font-weight: 600; color: #fff;">Nenhum artigo encontrado</div>
-        <div style="font-size: 0.85rem; margin-top: 4px;">Tente pesquisar por outro número (ex: 250, 32, 196) ou limpe o filtro.</div>
       </div>
     `;
     return;
@@ -545,7 +1042,6 @@ function renderArtigosList() {
   container.innerHTML = filtered.map(art => {
     const isExpanded = expandedArticles.has(art.id);
     const codeBadgeClass = art.code === 'CPP' ? 'badge-cpp' : 'badge-cp';
-
     const rulesHtml = (art.key_rules || []).map(r => `<li>${r}</li>`).join('');
 
     return `
@@ -561,7 +1057,6 @@ function renderArtigosList() {
           ${art.summary}
         </div>
 
-        <!-- Collapsible Extended Info -->
         <div class="article-collapsible ${isExpanded ? 'open' : ''}" id="artBody-${art.id}">
           <div class="article-section-title">📌 Regras Práticas de Atuação (OPC)</div>
           <ul class="article-rules-list">
@@ -610,16 +1105,16 @@ function copyArticleSummary(id) {
     txt += `\n⚠️ *Atenção OPC:* ${art.attention_opc}\n`;
   }
 
-  navigator.clipboard.writeText(txt).then(() => {
-    showToast('Artigo copiado para a área de transferência!');
-  }).catch(() => {
-    showToast('Erro ao copiar texto.');
-  });
+  if (navigator.clipboard) {
+    navigator.clipboard.writeText(txt).then(() => {
+      showToast('Artigo copiado para a área de transferência!');
+    }).catch(() => showToast('Erro ao copiar texto.'));
+  }
 }
 
-// ---------------------------------------------------------------------
-// Detail Modal & Interactive Checklist (Expedientes)
-// ---------------------------------------------------------------------
+// =========================================================================
+// 9. EXPEDIENTE DETAIL MODAL & CHECKLIST
+// =========================================================================
 
 function openDetail(id) {
   const item = allExpedientes.find(x => x.id === id);
@@ -690,7 +1185,7 @@ function openDetail(id) {
       </div>
     </div>
 
-    <!-- Checklist de Expediente a Elaborar -->
+    <!-- Checklist de Formulários -->
     <div class="info-box">
       <div class="info-header">
         <span>📑 Peças de Expediente a Elaborar (Checklist)</span>
@@ -717,7 +1212,6 @@ function openDetail(id) {
       </div>
     ` : ''}
 
-    <!-- Bottom Actions -->
     <div class="detail-actions-bar">
       <button class="btn-primary" onclick="copyExpedienteSummary('${item.id}')">
         <span>📋 Copiar Resumo / Enviar</span>
@@ -742,9 +1236,7 @@ function updateDetailStar() {
 }
 
 function toggleCurrentFavorite() {
-  if (currentDetailItem) {
-    toggleFavorite(currentDetailItem.id);
-  }
+  if (currentDetailItem) toggleFavorite(currentDetailItem.id);
 }
 
 function closeDetail() {
@@ -769,42 +1261,37 @@ function copyExpedienteSummary(itemId) {
   let text = `🚨 *GUIA POLICIAL - ${item.name.toUpperCase()}*\n`;
   text += `📖 ${item.article} (${item.nature})\n\n`;
   text += `🚨 *FLAGRANTE DELITO:*\n${item.detention}\n\n`;
-  
   text += `📋 *PASSOS NO TERRENO:*\n`;
-  (item.steps || []).forEach((s, i) => {
-    text += `${i + 1}. ${s}\n`;
-  });
-  
+  (item.steps || []).forEach((s, i) => { text += `${i + 1}. ${s}\n`; });
   text += `\n📑 *PEÇAS DE EXPEDIENTE:*\n`;
-  (item.expediente_docs || []).forEach(d => {
-    text += `▫️ ${d}\n`;
-  });
+  (item.expediente_docs || []).forEach(d => { text += `▫️ ${d}\n`; });
 
   if (item.critical_notes && item.critical_notes.length > 0) {
     text += `\n⚠️ *ATENÇÃO OPC:*\n`;
-    item.critical_notes.forEach(n => {
-      text += `• ${n}\n`;
-    });
+    item.critical_notes.forEach(n => { text += `• ${n}\n`; });
   }
 
-  navigator.clipboard.writeText(text).then(() => {
-    showToast('Resumo copiado para a área de transferência!');
-  }).catch(() => {
-    showToast('Erro ao copiar texto.');
-  });
+  if (navigator.clipboard) {
+    navigator.clipboard.writeText(text).then(() => {
+      showToast('Resumo copiado para a área de transferência!');
+    }).catch(() => showToast('Erro ao copiar texto.'));
+  }
 }
 
-// ---------------------------------------------------------------------
-// Settings Management
-// ---------------------------------------------------------------------
+// =========================================================================
+// 10. SETTINGS MODAL & RESET
+// =========================================================================
 
 function openSettings() {
   const modal = document.getElementById('settingsModal');
-  const pinInput = document.getElementById('settingsPinInput');
-  const syncInput = document.getElementById('settingsSyncUrl');
+  const sessInfo = document.getElementById('settingsSessionInfo');
+  const user = getCurrentUser();
 
-  if (pinInput) pinInput.value = getStoredPin();
-  if (syncInput) syncInput.value = localStorage.getItem('opc_sync_url') || 'expedientes.json';
+  if (sessInfo) {
+    sessInfo.textContent = user 
+      ? `Autenticado como: ${user.name} (${user.role.toUpperCase()})` 
+      : 'Sessão com código direto ativo';
+  }
 
   if (modal) modal.classList.add('open');
 }
@@ -815,39 +1302,26 @@ function closeSettings() {
 }
 
 function closeSettingsOnBackdrop(e) {
-  if (e.target.id === 'settingsModal') {
-    closeSettings();
-  }
-}
-
-function saveNewPin() {
-  const val = document.getElementById('settingsPinInput').value.trim();
-  if (!val) {
-    showToast('O código não pode estar vazio!');
-    return;
-  }
-  localStorage.setItem('opc_app_pin', val);
-  showToast('Código de acesso alterado com sucesso!');
-  closeSettings();
+  if (e.target.id === 'settingsModal') closeSettings();
 }
 
 function resetAppData() {
-  if (confirm('Deseja limpar todos os dados em cache e recarregar?')) {
+  if (confirm('Deseja limpar os dados em cache e recarregar a versão mais recente?')) {
     localStorage.removeItem('opc_expedientes_data');
     localStorage.removeItem('opc_artigos_data');
     localStorage.removeItem('opc_favorites');
-    caches.delete('guia-policial-v1');
-    caches.delete('guia-policial-v2').then(() => {
+    if ('caches' in window) {
+      caches.keys().then((keys) => {
+        return Promise.all(keys.map(k => caches.delete(k)));
+      }).then(() => {
+        location.reload();
+      });
+    } else {
       location.reload();
-    });
+    }
   }
 }
 
-// ---------------------------------------------------------------------
-// Toast Notification Utility
-// ---------------------------------------------------------------------
-
-let toastTimeout = null;
 function showToast(msg) {
   const toast = document.getElementById('toast');
   const toastMsg = document.getElementById('toastMsg');
@@ -856,15 +1330,14 @@ function showToast(msg) {
   toastMsg.textContent = msg;
   toast.classList.add('show');
 
-  if (toastTimeout) clearTimeout(toastTimeout);
-  toastTimeout = setTimeout(() => {
+  setTimeout(() => {
     toast.classList.remove('show');
   }, 2800);
 }
 
-// ---------------------------------------------------------------------
-// PWA Service Worker Registration & Auto-Update
-// ---------------------------------------------------------------------
+// =========================================================================
+// 11. PWA SERVICE WORKER AUTO-UPDATE (v5.0)
+// =========================================================================
 
 if ('serviceWorker' in navigator) {
   let refreshing = false;
@@ -877,12 +1350,9 @@ if ('serviceWorker' in navigator) {
   });
 
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('sw.js?v=4.0')
+    navigator.serviceWorker.register('sw.js?v=5.0')
       .then(reg => {
-        console.log('ServiceWorker registado com sucesso:', reg.scope);
-        // Forçar verificação imediata no servidor do GitHub
         reg.update();
-
         reg.addEventListener('updatefound', () => {
           const newWorker = reg.installing;
           if (newWorker) {
@@ -898,16 +1368,15 @@ if ('serviceWorker' in navigator) {
   });
 }
 
-// ---------------------------------------------------------------------
-// App Initialization
-// ---------------------------------------------------------------------
+// =========================================================================
+// 12. APP INITIALIZATION
+// =========================================================================
 
 document.addEventListener('DOMContentLoaded', () => {
-  // Check migration to 'pinhalnovo'
-  getStoredPin();
+  const user = getCurrentUser();
 
   if (isAppUnlocked()) {
-    document.getElementById('securityGate').style.display = 'none';
+    applyUserSession(user);
   } else {
     document.getElementById('securityGate').style.display = 'flex';
   }

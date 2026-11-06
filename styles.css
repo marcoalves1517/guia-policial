@@ -119,6 +119,16 @@ body {
   text-transform: uppercase;
 }
 
+.admin-badge {
+  font-size: 0.65rem;
+  background: #f59e0b;
+  color: #000;
+  padding: 2px 6px;
+  border-radius: var(--radius-full);
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
 .header-actions {
   display: flex;
   align-items: center;
@@ -146,6 +156,12 @@ body {
 
 .icon-btn.active {
   background: rgba(245, 158, 11, 0.2);
+  border-color: var(--accent-amber);
+  color: var(--accent-amber);
+}
+
+.icon-btn.admin-btn {
+  background: rgba(245, 158, 11, 0.15);
   border-color: var(--accent-amber);
   color: var(--accent-amber);
 }
@@ -448,6 +464,24 @@ body {
   border: 1px solid rgba(139, 92, 246, 0.3);
 }
 
+.badge-pending {
+  background: rgba(245, 158, 11, 0.2);
+  color: #fbbf24;
+  border: 1px solid rgba(245, 158, 11, 0.4);
+}
+
+.badge-approved {
+  background: rgba(16, 185, 129, 0.2);
+  color: #34d399;
+  border: 1px solid rgba(16, 185, 129, 0.4);
+}
+
+.badge-rejected {
+  background: rgba(239, 68, 68, 0.2);
+  color: #f87171;
+  border: 1px solid rgba(239, 68, 68, 0.4);
+}
+
 .crime-preview {
   font-size: 0.85rem;
   color: var(--text-secondary);
@@ -468,9 +502,7 @@ body {
   font-weight: 500;
 }
 
-/* ================================================= */
-/* ARTICLE / PRONTUÁRIO CARDS                        */
-/* ================================================= */
+/* Article Cards */
 .article-card {
   background: var(--bg-card);
   border: 1px solid var(--border-color);
@@ -578,9 +610,7 @@ body {
   cursor: pointer;
 }
 
-/* ================================================= */
-/* POCKET CHEAT SHEET (PRAZOS & LIMITES)             */
-/* ================================================= */
+/* Pocket Grid */
 .pocket-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
@@ -637,20 +667,13 @@ body {
   margin-bottom: 4px;
 }
 
-.pocket-article {
-  font-size: 0.75rem;
-  color: var(--accent-cyan);
-  font-weight: 600;
-  margin-bottom: 8px;
-}
-
 .pocket-desc {
   font-size: 0.83rem;
   color: var(--text-secondary);
   line-height: 1.45;
 }
 
-/* Detail Modal / Overlay */
+/* Detail Modal */
 .modal-overlay {
   position: fixed;
   top: 0;
@@ -722,7 +745,7 @@ body {
   margin-bottom: 16px;
 }
 
-/* Info Box Sections */
+/* Info Box */
 .info-box {
   background: var(--bg-card);
   border: 1px solid var(--border-color);
@@ -841,7 +864,7 @@ body {
   text-decoration: line-through;
 }
 
-/* Action Bar Bottom */
+/* Buttons */
 .detail-actions-bar {
   display: flex;
   gap: 10px;
@@ -853,10 +876,10 @@ body {
   background: var(--accent-blue);
   color: #fff;
   border: none;
-  padding: 14px;
+  padding: 12px 16px;
   border-radius: var(--radius-md);
   font-weight: 700;
-  font-size: 0.95rem;
+  font-size: 0.92rem;
   cursor: pointer;
   display: flex;
   align-items: center;
@@ -873,16 +896,58 @@ body {
   background: var(--bg-card);
   border: 1px solid var(--border-color);
   color: var(--text-primary);
-  padding: 14px 18px;
+  padding: 12px 16px;
   border-radius: var(--radius-md);
   font-weight: 600;
+  font-size: 0.88rem;
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
 }
 
-/* Toast Message */
+.btn-whatsapp {
+  background: #25D366;
+  color: #fff;
+  border: none;
+  padding: 10px 14px;
+  border-radius: var(--radius-sm);
+  font-size: 0.85rem;
+  font-weight: 700;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  text-decoration: none;
+}
+
+.btn-whatsapp:active {
+  background: #1da851;
+}
+
+.btn-approve {
+  background: rgba(16, 185, 129, 0.2);
+  border: 1px solid var(--accent-green);
+  color: #34d399;
+  padding: 6px 12px;
+  border-radius: var(--radius-sm);
+  font-size: 0.8rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.btn-reject {
+  background: rgba(239, 68, 68, 0.2);
+  border: 1px solid var(--accent-red);
+  color: #f87171;
+  padding: 6px 12px;
+  border-radius: var(--radius-sm);
+  font-size: 0.8rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+/* Toast */
 .toast {
   position: fixed;
   bottom: 24px;
@@ -908,7 +973,9 @@ body {
   transform: translateX(-50%) translateY(0);
 }
 
-/* Security PIN Gate Modal */
+/* ================================================= */
+/* AUTH PORTAL / SECURITY GATE (MULTI-MODE)          */
+/* ================================================= */
 .security-gate {
   position: fixed;
   top: 0;
@@ -920,24 +987,25 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 20px;
+  padding: 16px;
+  overflow-y: auto;
 }
 
 .security-box {
   background: var(--bg-card);
   border: 1px solid var(--border-color);
   border-radius: var(--radius-lg);
-  padding: 32px 24px;
-  max-width: 380px;
+  padding: 24px 20px;
+  max-width: 420px;
   width: 100%;
   text-align: center;
   box-shadow: var(--shadow-lg);
 }
 
 .gate-shield-icon {
-  width: 64px;
-  height: 64px;
-  margin: 0 auto 16px;
+  width: 56px;
+  height: 56px;
+  margin: 0 auto 12px;
   background: rgba(59, 130, 246, 0.15);
   border-radius: 50%;
   display: flex;
@@ -950,56 +1018,226 @@ body {
   font-size: 1.25rem;
   font-weight: 800;
   color: #fff;
-  margin-bottom: 6px;
+  margin-bottom: 4px;
 }
 
 .gate-subtitle {
-  font-size: 0.85rem;
+  font-size: 0.83rem;
   color: var(--text-secondary);
-  margin-bottom: 24px;
-}
-
-.pin-input {
-  width: 100%;
-  padding: 14px;
-  background: var(--bg-input);
-  border: 2px solid var(--border-color);
-  border-radius: var(--radius-md);
-  font-size: 1.1rem;
-  text-align: center;
-  color: #fff;
-  outline: none;
   margin-bottom: 16px;
 }
 
-.pin-input:focus {
+/* Auth Portal Tabs */
+.auth-tabs {
+  display: flex;
+  background: var(--bg-input);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  padding: 3px;
+  margin-bottom: 18px;
+  gap: 2px;
+}
+
+.auth-tab-btn {
+  flex: 1;
+  padding: 8px 4px;
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--text-muted);
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: all 0.2s;
+  white-space: nowrap;
+}
+
+.auth-tab-btn.active {
+  background: var(--accent-blue);
+  color: #fff;
+}
+
+.auth-form-panel {
+  display: none;
+  text-align: left;
+}
+
+.auth-form-panel.active {
+  display: block;
+}
+
+.form-group {
+  margin-bottom: 12px;
+}
+
+.form-label {
+  display: block;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  margin-bottom: 4px;
+}
+
+.form-input {
+  width: 100%;
+  padding: 12px;
+  background: var(--bg-input);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  font-size: 0.95rem;
+  color: #fff;
+  outline: none;
+  transition: border-color 0.2s;
+}
+
+.form-input:focus {
   border-color: var(--accent-blue);
 }
 
 .gate-error {
-  color: var(--accent-red);
+  background: rgba(239, 68, 68, 0.15);
+  border: 1px solid var(--accent-red);
+  color: #fca5a5;
+  padding: 10px;
+  border-radius: var(--radius-sm);
   font-size: 0.82rem;
   font-weight: 600;
   margin-bottom: 12px;
   display: none;
 }
 
-.gate-btn {
-  width: 100%;
-  padding: 14px;
-  background: var(--accent-blue);
-  color: #fff;
-  border: none;
-  border-radius: var(--radius-md);
-  font-size: 1rem;
-  font-weight: 700;
-  cursor: pointer;
+.gate-success {
+  background: rgba(16, 185, 129, 0.15);
+  border: 1px solid var(--accent-green);
+  color: #86efac;
+  padding: 10px;
+  border-radius: var(--radius-sm);
+  font-size: 0.82rem;
+  font-weight: 600;
+  margin-bottom: 12px;
+  display: none;
 }
 
-.gate-hint {
-  font-size: 0.75rem;
+/* ================================================= */
+/* ADMIN DASHBOARD MODAL                             */
+/* ================================================= */
+.admin-modal {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.85);
+  z-index: 120;
+  display: none;
+  backdrop-filter: blur(4px);
+  overflow-y: auto;
+  padding: 16px;
+}
+
+.admin-modal.open {
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+}
+
+.admin-container {
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-lg);
+  max-width: 680px;
+  width: 100%;
+  margin: 20px auto;
+  box-shadow: var(--shadow-lg);
+  overflow: hidden;
+}
+
+.admin-header {
+  padding: 16px 20px;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border-color);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.admin-title {
+  font-size: 1.15rem;
+  font-weight: 800;
+  color: #fff;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.admin-nav {
+  display: flex;
+  background: var(--bg-input);
+  border-bottom: 1px solid var(--border-color);
+  padding: 6px 12px;
+  gap: 6px;
+  overflow-x: auto;
+}
+
+.admin-tab {
+  padding: 8px 12px;
+  font-size: 0.78rem;
+  font-weight: 700;
   color: var(--text-muted);
-  margin-top: 16px;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.admin-tab.active {
+  background: var(--accent-blue);
+  color: #fff;
+}
+
+.admin-body {
+  padding: 20px;
+  max-height: 75vh;
+  overflow-y: auto;
+}
+
+/* User Card in Admin */
+.user-card {
+  background: var(--bg-input);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  padding: 14px;
+  margin-bottom: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.user-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.user-name {
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: #fff;
+}
+
+.user-meta {
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.user-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 6px;
 }
 
 /* Settings Modal */

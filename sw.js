@@ -1,4 +1,4 @@
-const CACHE_NAME = 'guia-policial-v4';
+const CACHE_NAME = 'guia-policial-v5';
 const ASSETS_TO_CACHE = [
   './',
   './index.html',
@@ -11,7 +11,7 @@ const ASSETS_TO_CACHE = [
   './icon-512.png'
 ];
 
-// Install: Cache core assets and activate immediately without waiting
+// Install: Cache core assets and activate immediately
 self.addEventListener('install', (event) => {
   self.skipWaiting();
   event.waitUntil(
@@ -28,7 +28,7 @@ self.addEventListener('activate', (event) => {
       return Promise.all(
         keys.map((key) => {
           if (key !== CACHE_NAME) {
-            console.log('A eliminar cache antigo:', key);
+            console.log('Removendo cache antigo:', key);
             return caches.delete(key);
           }
         })
@@ -49,10 +49,9 @@ self.addEventListener('fetch', (event) => {
   const req = event.request;
   const url = new URL(req.url);
 
-  // Skip non-GET requests
   if (req.method !== 'GET') return;
 
-  // Network First strategy: always try to fetch fresh from network
+  // Always try network first to ensure latest updates without manual cache clearing
   event.respondWith(
     fetch(req, { cache: 'no-cache' })
       .then((networkResponse) => {
@@ -65,7 +64,6 @@ self.addEventListener('fetch', (event) => {
         return networkResponse;
       })
       .catch(() => {
-        // Fallback to cache if offline
         return caches.match(req).then((cached) => {
           if (cached) return cached;
           if (req.mode === 'navigate' || url.pathname.endsWith('.html') || url.pathname.endsWith('/')) {
