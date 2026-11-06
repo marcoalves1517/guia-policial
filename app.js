@@ -1,17 +1,33 @@
 // Guia de Expediente Policial - Core Logic
 
 let allExpedientes = [];
+let allArtigos = [];
+
+let activeMainTab = 'expedientes';
+
+// Expedientes state
 let currentCategory = 'all';
 let currentNature = 'all';
 let currentSearch = '';
 let onlyFavorites = false;
 let currentDetailItem = null;
 
+// Artigos state
+let currentArtigoTheme = 'all';
+let currentArtigoSearch = '';
+const expandedArticles = new Set();
+
 // Security PIN Configuration
-const DEFAULT_PIN = 'GNR2025';
+const DEFAULT_PIN = 'pinhalnovo';
 
 function getStoredPin() {
-  return localStorage.getItem('opc_app_pin') || DEFAULT_PIN;
+  const stored = localStorage.getItem('opc_app_pin');
+  // Auto-migrate legacy default PIN
+  if (!stored || stored.toUpperCase() === 'GNR2025') {
+    localStorage.setItem('opc_app_pin', DEFAULT_PIN);
+    return DEFAULT_PIN;
+  }
+  return stored;
 }
 
 function isAppUnlocked() {
@@ -37,7 +53,7 @@ function handlePinSubmit(e) {
   const inputPin = document.getElementById('pinInput').value.trim();
   const validPin = getStoredPin();
 
-  if (inputPin.toUpperCase() === validPin.toUpperCase()) {
+  if (inputPin.toLowerCase() === validPin.toLowerCase()) {
     unlockApp();
     showToast('Acesso autorizado! Bem-vindo ao Guia.');
   } else {
@@ -48,21 +64,53 @@ function handlePinSubmit(e) {
 }
 
 // ---------------------------------------------------------------------
+// Main Navigation Tabs
+// ---------------------------------------------------------------------
+
+function switchMainTab(tabName) {
+  activeMainTab = tabName;
+
+  document.querySelectorAll('.nav-tab').forEach(t => t.classList.remove('active'));
+  document.getElementById('tabExpedientes').classList.toggle('active', tabName === 'expedientes');
+  document.getElementById('tabArtigos').classList.toggle('active', tabName === 'artigos');
+  document.getElementById('tabPrazos').classList.toggle('active', tabName === 'prazos');
+
+  document.getElementById('viewExpedientes').style.display = tabName === 'expedientes' ? 'block' : 'none';
+  document.getElementById('viewArtigos').style.display = tabName === 'artigos' ? 'block' : 'none';
+  document.getElementById('viewPrazos').style.display = tabName === 'prazos' ? 'block' : 'none';
+
+  if (tabName === 'artigos') {
+    renderArtigosUI();
+  } else if (tabName === 'expedientes') {
+    renderUI();
+  }
+}
+
+// ---------------------------------------------------------------------
 // Data Loading & Syncing
 // ---------------------------------------------------------------------
 
-async function loadExpedientes() {
-  const cachedData = localStorage.getItem('opc_expedientes_data');
-  if (cachedData) {
+async function loadAllData() {
+  // 1. Load cached data
+  const cachedExp = localStorage.getItem('opc_expedientes_data');
+  const cachedArt = localStorage.getItem('opc_artigos_data');
+
+  if (cachedExp) {
     try {
-      allExpedientes = JSON.parse(cachedData);
-      renderUI();
-    } catch (err) {
-      console.warn('Erro ao ler cache local:', err);
-    }
+      allExpedientes = JSON.parse(cachedExp);
+    } catch (e) { console.warn('Erro ao ler cache de expedientes:', e); }
   }
 
-  // Fetch latest data from server/file
+  if (cachedArt) {
+    try {
+      allArtigos = JSON.parse(cachedArt);
+    } catch (e) { console.warn('Erro ao ler cache de artigos:', e); }
+  }
+
+  renderUI();
+  renderArtigosUI();
+
+  // 2. Fetch fresh data
   await syncData(false);
 }
 
@@ -70,29 +118,39 @@ async function syncData(manual = false) {
   const syncBtn = document.getElementById('syncBtn');
   if (syncBtn) syncBtn.classList.add('loading');
 
-  const customUrl = localStorage.getItem('opc_sync_url') || 'expedientes.json';
-
   try {
-    const res = await fetch(customUrl + '?t=' + Date.now());
-    if (!res.ok) throw new Error('Falha ao descarregar base de dados');
-    const data = await res.json();
-
-    if (Array.isArray(data) && data.length > 0) {
-      allExpedientes = data;
-      localStorage.setItem('opc_expedientes_data', JSON.stringify(data));
-      localStorage.setItem('opc_last_sync', new Date().toISOString());
-      
-      updateStatusDisplay();
-      renderUI();
-
-      if (manual) {
-        showToast(`Sincronizado! ${data.length} procedimentos atualizados.`);
+    // Sync Expedientes
+    const resExp = await fetch('expedientes.json?t=' + Date.now());
+    if (resExp.ok) {
+      const dataExp = await resExp.json();
+      if (Array.isArray(dataExp) && dataExp.length > 0) {
+        allExpedientes = dataExp;
+        localStorage.setItem('opc_expedientes_data', JSON.stringify(dataExp));
       }
+    }
+
+    // Sync Artigos OPC
+    const resArt = await fetch('artigos_opc.json?t=' + Date.now());
+    if (resArt.ok) {
+      const dataArt = await resArt.json();
+      if (Array.isArray(dataArt) && dataArt.length > 0) {
+        allArtigos = dataArt;
+        localStorage.setItem('opc_artigos_data', JSON.stringify(dataArt));
+      }
+    }
+
+    localStorage.setItem('opc_last_sync', new Date().toISOString());
+    updateStatusDisplay();
+    renderUI();
+    renderArtigosUI();
+
+    if (manual) {
+      showToast(`Sincronizado! ${allExpedientes.length} crimes e ${allArtigos.length} artigos atualizados.`);
     }
   } catch (err) {
     console.log('Modo offline ativo ou erro na sincronização:', err);
     if (manual) {
-      showToast('Sem ligação à rede. A utilizar cópia local guardada.');
+      showToast('Sem ligação à rede. A utilizar base de dados local guardada.');
     }
   } finally {
     if (syncBtn) syncBtn.classList.remove('loading');
@@ -103,7 +161,7 @@ async function syncData(manual = false) {
 function updateStatusDisplay() {
   const versionText = document.getElementById('dataVersionText');
   if (versionText) {
-    versionText.textContent = `${allExpedientes.length} Procedimentos Atualizados`;
+    versionText.textContent = `${allExpedientes.length} Crimes + ${allArtigos.length} Artigos OPC`;
   }
 }
 
@@ -187,7 +245,7 @@ function toggleChecklistItem(itemId, idx, checked) {
 }
 
 // ---------------------------------------------------------------------
-// Search & Filter Logic
+// Utilities
 // ---------------------------------------------------------------------
 
 function normalizeText(str) {
@@ -198,12 +256,14 @@ function normalizeText(str) {
     .toLowerCase();
 }
 
+// ---------------------------------------------------------------------
+// VIEW 1: EXPEDIENTES LOGIC
+// ---------------------------------------------------------------------
+
 function handleSearch(val) {
   currentSearch = val;
   const clearBtn = document.getElementById('clearSearchBtn');
-  if (clearBtn) {
-    clearBtn.style.display = val ? 'block' : 'none';
-  }
+  if (clearBtn) clearBtn.style.display = val ? 'block' : 'none';
   renderCrimeList();
 }
 
@@ -219,7 +279,7 @@ function clearSearch() {
 
 function selectCategory(catId, btn) {
   currentCategory = catId;
-  document.querySelectorAll('.pill-btn').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('#categoriesBar .pill-btn').forEach(p => p.classList.remove('active'));
   if (btn) btn.classList.add('active');
   renderCrimeList();
 }
@@ -230,10 +290,6 @@ function setNatureFilter(nature, btn) {
   if (btn) btn.classList.add('active');
   renderCrimeList();
 }
-
-// ---------------------------------------------------------------------
-// Rendering Categories & Crimes
-// ---------------------------------------------------------------------
 
 function renderCategories() {
   const categoriesBar = document.getElementById('categoriesBar');
@@ -276,22 +332,10 @@ function renderCrimeList() {
   const favs = getFavorites();
 
   const filtered = allExpedientes.filter(item => {
-    // Category filter
-    if (currentCategory !== 'all' && item.category_id !== currentCategory) {
-      return false;
-    }
+    if (currentCategory !== 'all' && item.category_id !== currentCategory) return false;
+    if (currentNature !== 'all' && !item.nature.includes(currentNature)) return false;
+    if (onlyFavorites && !favs.includes(item.id)) return false;
 
-    // Natureza filter
-    if (currentNature !== 'all' && !item.nature.includes(currentNature)) {
-      return false;
-    }
-
-    // Favorites filter
-    if (onlyFavorites && !favs.includes(item.id)) {
-      return false;
-    }
-
-    // Search query
     if (searchNorm) {
       const matchName = normalizeText(item.name).includes(searchNorm);
       const matchArt = normalizeText(item.article).includes(searchNorm);
@@ -304,7 +348,6 @@ function renderCrimeList() {
         return false;
       }
     }
-
     return true;
   });
 
@@ -364,7 +407,193 @@ function renderUI() {
 }
 
 // ---------------------------------------------------------------------
-// Detail Modal & Interactive Checklist
+// VIEW 2: ARTIGOS & PRONTUÁRIO OPC LOGIC
+// ---------------------------------------------------------------------
+
+function handleArtigosSearch(val) {
+  currentArtigoSearch = val;
+  const clearBtn = document.getElementById('clearArtigosSearchBtn');
+  if (clearBtn) clearBtn.style.display = val ? 'block' : 'none';
+  renderArtigosList();
+}
+
+function clearArtigosSearch() {
+  const input = document.getElementById('searchArtigosInput');
+  if (input) {
+    input.value = '';
+    currentArtigoSearch = '';
+    document.getElementById('clearArtigosSearchBtn').style.display = 'none';
+    renderArtigosList();
+  }
+}
+
+function selectArtigoTheme(themeId, btn) {
+  currentArtigoTheme = themeId;
+  document.querySelectorAll('#artigosThemesBar .pill-btn').forEach(p => p.classList.remove('active'));
+  if (btn) btn.classList.add('active');
+  renderArtigosList();
+}
+
+function toggleArticleExpand(id) {
+  if (expandedArticles.has(id)) {
+    expandedArticles.delete(id);
+  } else {
+    expandedArticles.add(id);
+  }
+  const el = document.getElementById(`artBody-${id}`);
+  const btn = document.getElementById(`artBtn-${id}`);
+  if (el) el.classList.toggle('open', expandedArticles.has(id));
+  if (btn) btn.textContent = expandedArticles.has(id) ? 'Recolher Detalhes ▲' : 'Ver Regras & Detalhes ▼';
+}
+
+function renderArtigosThemes() {
+  const bar = document.getElementById('artigosThemesBar');
+  if (!bar) return;
+
+  const themes = [
+    { id: 'all', name: 'Todos os Artigos', icon: '📚' },
+    { id: 'competencias', name: 'Poderes & Competências', icon: '👮' },
+    { id: 'detencao', name: 'Detenção & Flagrante', icon: '🚨' },
+    { id: 'arguido', name: 'Arguido & TIR', icon: '⚖️' },
+    { id: 'revistas', name: 'Revistas & Buscas', icon: '🔍' },
+    { id: 'vitima', name: 'Estatuto da Vítima', icon: '👥' },
+    { id: 'legitima_defesa', name: 'Legítima Defesa', icon: '🛡️' },
+    { id: 'queixa', name: 'Queixa & Prazos', icon: '⏳' },
+    { id: 'autoridade', name: 'Crimes Contra Autoridade', icon: '🏛️' }
+  ];
+
+  bar.innerHTML = themes.map(th => {
+    const count = th.id === 'all'
+      ? allArtigos.length
+      : allArtigos.filter(x => x.theme === th.id).length;
+
+    const isActive = currentArtigoTheme === th.id ? 'active' : '';
+    return `
+      <button class="pill-btn ${isActive}" onclick="selectArtigoTheme('${th.id}', this)">
+        <span>${th.icon}</span>
+        <span>${th.name}</span>
+        <span class="pill-count">${count}</span>
+      </button>
+    `;
+  }).join('');
+}
+
+function renderArtigosList() {
+  const container = document.getElementById('artigosList');
+  const countLabel = document.getElementById('artigosResultsCount');
+  if (!container) return;
+
+  const searchNorm = normalizeText(currentArtigoSearch);
+
+  const filtered = allArtigos.filter(art => {
+    if (currentArtigoTheme !== 'all' && art.theme !== currentArtigoTheme) return false;
+
+    if (searchNorm) {
+      const matchArt = normalizeText(art.article).includes(searchNorm);
+      const matchTitle = normalizeText(art.title).includes(searchNorm);
+      const matchSummary = normalizeText(art.summary).includes(searchNorm);
+      const matchRules = art.key_rules && art.key_rules.some(r => normalizeText(r).includes(searchNorm));
+      const matchAtt = normalizeText(art.attention_opc).includes(searchNorm);
+
+      if (!matchArt && !matchTitle && !matchSummary && !matchRules && !matchAtt) {
+        return false;
+      }
+    }
+    return true;
+  });
+
+  if (countLabel) {
+    countLabel.textContent = `${filtered.length} artigo${filtered.length === 1 ? '' : 's'} encontrado${filtered.length === 1 ? '' : 's'}`;
+  }
+
+  if (filtered.length === 0) {
+    container.innerHTML = `
+      <div style="text-align: center; padding: 40px 20px; color: var(--text-muted);">
+        <div style="font-size: 2rem; margin-bottom: 8px;">📖</div>
+        <div style="font-weight: 600; color: #fff;">Nenhum artigo encontrado</div>
+        <div style="font-size: 0.85rem; margin-top: 4px;">Tente pesquisar por outro número (ex: 250, 32, 196) ou limpe o filtro.</div>
+      </div>
+    `;
+    return;
+  }
+
+  container.innerHTML = filtered.map(art => {
+    const isExpanded = expandedArticles.has(art.id);
+    const codeBadgeClass = art.code === 'CPP' ? 'badge-cpp' : 'badge-cp';
+
+    const rulesHtml = (art.key_rules || []).map(r => `<li>${r}</li>`).join('');
+
+    return `
+      <div class="article-card">
+        <div class="article-header">
+          <div>
+            <span class="badge ${codeBadgeClass}" style="margin-bottom: 4px;">${art.article}</span>
+            <div class="article-title">${art.title}</div>
+          </div>
+        </div>
+
+        <div class="article-summary-box">
+          ${art.summary}
+        </div>
+
+        <!-- Collapsible Extended Info -->
+        <div class="article-collapsible ${isExpanded ? 'open' : ''}" id="artBody-${art.id}">
+          <div class="article-section-title">📌 Regras Práticas de Atuação (OPC)</div>
+          <ul class="article-rules-list">
+            ${rulesHtml}
+          </ul>
+
+          ${art.attention_opc ? `
+            <div class="article-attention-box">
+              <strong>⚠️ ATENÇÃO OPC (PARA NÃO ERRAR):</strong><br>
+              ${art.attention_opc}
+            </div>
+          ` : ''}
+        </div>
+
+        <div class="article-btn-row">
+          <button class="btn-toggle-art" id="artBtn-${art.id}" onclick="toggleArticleExpand('${art.id}')">
+            ${isExpanded ? 'Recolher Detalhes ▲' : 'Ver Regras & Detalhes ▼'}
+          </button>
+          <button class="btn-copy-art" onclick="copyArticleSummary('${art.id}')" title="Copiar resumo">
+            📋 Copiar
+          </button>
+        </div>
+      </div>
+    `;
+  }).join('');
+}
+
+function renderArtigosUI() {
+  renderArtigosThemes();
+  renderArtigosList();
+}
+
+function copyArticleSummary(id) {
+  const art = allArtigos.find(x => x.id === id);
+  if (!art) return;
+
+  let txt = `📖 *${art.article.toUpperCase()} - ${art.title.toUpperCase()}*\n`;
+  txt += `\n*Resumo Prático OPC:*\n${art.summary}\n`;
+  
+  if (art.key_rules && art.key_rules.length > 0) {
+    txt += `\n*Regras Essenciais:*\n`;
+    art.key_rules.forEach(r => { txt += `• ${r}\n`; });
+  }
+
+  if (art.attention_opc) {
+    txt += `\n⚠️ *Atenção OPC:* ${art.attention_opc}\n`;
+  }
+
+  navigator.clipboard.writeText(txt).then(() => {
+    showToast('Artigo copiado para a área de transferência!');
+  }).catch(() => {
+    showToast('Erro ao copiar texto.');
+  });
+}
+
+// ---------------------------------------------------------------------
+// Detail Modal & Interactive Checklist (Expedientes)
 // ---------------------------------------------------------------------
 
 function openDetail(id) {
@@ -580,8 +809,10 @@ function saveNewPin() {
 function resetAppData() {
   if (confirm('Deseja limpar todos os dados em cache e recarregar?')) {
     localStorage.removeItem('opc_expedientes_data');
+    localStorage.removeItem('opc_artigos_data');
     localStorage.removeItem('opc_favorites');
-    caches.delete('guia-policial-v1').then(() => {
+    caches.delete('guia-policial-v1');
+    caches.delete('guia-policial-v2').then(() => {
       location.reload();
     });
   }
@@ -623,11 +854,14 @@ if ('serviceWorker' in navigator) {
 // ---------------------------------------------------------------------
 
 document.addEventListener('DOMContentLoaded', () => {
+  // Check migration to 'pinhalnovo'
+  getStoredPin();
+
   if (isAppUnlocked()) {
     document.getElementById('securityGate').style.display = 'none';
   } else {
     document.getElementById('securityGate').style.display = 'flex';
   }
 
-  loadExpedientes();
+  loadAllData();
 });

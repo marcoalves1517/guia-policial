@@ -1,10 +1,11 @@
-const CACHE_NAME = 'guia-policial-v1';
+const CACHE_NAME = 'guia-policial-v2';
 const ASSETS_TO_CACHE = [
   './',
   './index.html',
   './styles.css',
   './app.js',
   './expedientes.json',
+  './artigos_opc.json',
   './manifest.json',
   './icon-192.png',
   './icon-512.png'
@@ -34,12 +35,12 @@ self.addEventListener('activate', (event) => {
   );
 });
 
-// Fetch: Network first for data, Cache first for assets, fallback to cache
+// Fetch: Network first for JSON databases, Cache first for assets, fallback to cache
 self.addEventListener('fetch', (event) => {
   const url = new URL(event.request.url);
 
-  // If requesting expedientes.json, try network first to get updates, fallback to cache
-  if (url.pathname.endsWith('expedientes.json')) {
+  // If requesting JSON databases (expedientes.json or artigos_opc.json), try network first to get updates, fallback to cache
+  if (url.pathname.endsWith('expedientes.json') || url.pathname.endsWith('artigos_opc.json')) {
     event.respondWith(
       fetch(event.request)
         .then((networkResponse) => {
