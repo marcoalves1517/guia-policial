@@ -1,9 +1,9 @@
-const CACHE_NAME = 'guia-policial-v5';
+const CACHE_NAME = 'guia-policial-v6';
 const ASSETS_TO_CACHE = [
   './',
   './index.html',
-  './styles.css',
-  './app.js',
+  './styles.css?v=6.0',
+  './app.js?v=6.0',
   './expedientes.json',
   './artigos_opc.json',
   './manifest.json',
@@ -44,12 +44,17 @@ self.addEventListener('message', (event) => {
   }
 });
 
-// Fetch: NETWORK FIRST for everything, fallback to Cache when offline
+// Fetch: NETWORK FIRST for local assets, ignore external APIs
 self.addEventListener('fetch', (event) => {
   const req = event.request;
   const url = new URL(req.url);
 
   if (req.method !== 'GET') return;
+
+  // IMPORTANT: Do NOT cache or intercept external API calls (e.g., Cloud DB)
+  if (url.origin !== self.location.origin) {
+    return;
+  }
 
   // Always try network first to ensure latest updates without manual cache clearing
   event.respondWith(
