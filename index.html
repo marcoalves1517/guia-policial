@@ -1,0 +1,555 @@
+<!DOCTYPE html>
+<html lang="pt-PT">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <title>Guia de Expediente Policial - OPC</title>
+  
+  <!-- Anti-cache meta tags for immediate updates -->
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+  <meta http-equiv="Pragma" content="no-cache">
+  <meta http-equiv="Expires" content="0">
+  
+  <!-- Mobile & PWA meta tags -->
+  <meta name="theme-color" content="#0b1329">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Guia Policial">
+  <link rel="manifest" href="manifest.json">
+  <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
+  <link rel="apple-touch-icon" href="icon-192.png">
+
+  <!-- Stylesheet -->
+  <link rel="stylesheet" href="styles.css?v=8.4">
+</head>
+<body>
+
+  <!-- ============================================================ -->
+  <!-- 1. PORTAL DE AUTENTICAÇÃO OPERACIONAL                        -->
+  <!-- ============================================================ -->
+  <div id="securityGate" class="security-gate">
+    <div class="security-box">
+      <div class="gate-shield-icon">
+        <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+          <path d="m9 12 2 2 4-4"/>
+        </svg>
+      </div>
+      <h2 class="gate-title">Guia Policial OPC</h2>
+      <p class="gate-subtitle">Acesso restrito e reservado a forças de segurança</p>
+
+      <!-- Messages Alert -->
+      <div id="gateError" class="gate-error"></div>
+      <div id="gateSuccess" class="gate-success"></div>
+
+      <!-- VIEW 1: LOGIN -->
+      <div id="gateViewLogin" class="auth-form-panel active">
+        <form onsubmit="handleUnifiedLogin(event)">
+          <div class="form-group">
+            <label class="form-label">Acesso</label>
+            <input type="password" id="unifiedLoginInput" class="form-input" autocomplete="new-password" autocapitalize="none" autocorrect="off" spellcheck="false" enterkeyhint="go" aria-label="Acesso" autofocus required>
+          </div>
+          <button type="submit" class="btn-primary" style="width: 100%; margin-top: 8px;">🔓 Entrar no Guia Policial</button>
+        </form>
+        <div style="margin-top: 18px; text-align: center;">
+          <button type="button" style="background: none; border: none; color: var(--accent-cyan); font-size: 0.85rem; font-weight: 600; cursor: pointer; text-decoration: underline;" onclick="switchGateView('request')">
+            👉 Não tem código de acesso? Pedir Código ao Administrador
+          </button>
+        </div>
+      </div>
+
+      <!-- VIEW 2: FORMULÁRIO DE PEDIDO DE CÓDIGO (NOME, POSTO, UNIDADE, WHATSAPP) -->
+      <div id="gateViewRequest" class="auth-form-panel">
+        <div style="font-size: 0.88rem; font-weight: 700; color: #fff; margin-bottom: 12px; text-align: center;">
+          Pedir Código de Acesso
+        </div>
+        <form onsubmit="handleAccessRequest(event)">
+          <div class="form-group">
+            <label class="form-label">Nome Completo</label>
+            <input type="text" id="reqName" class="form-input" placeholder="ex: Manuel Silva" required>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Posto</label>
+            <input type="text" id="reqRole" class="form-input" placeholder="ex: Guarda, Cabo, Sargento" required>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Posto / Unidade onde Trabalha</label>
+            <input type="text" id="reqUnit" class="form-input" placeholder="ex: Posto Territorial do Pinhal Novo" required>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Telemóvel (WhatsApp)</label>
+            <input type="tel" id="reqPhone" class="form-input" placeholder="ex: 912345678" required>
+          </div>
+          <button type="submit" class="btn-primary" style="width: 100%; margin-top: 8px;">Submeter Pedido ao Administrador</button>
+        </form>
+        <div style="margin-top: 14px; text-align: center;">
+          <button type="button" class="btn-secondary" style="width: 100%; font-size: 0.82rem;" onclick="switchGateView('login')">
+            ← Voltar ao Ecrã de Entrada
+          </button>
+        </div>
+      </div>
+
+      <!-- VIEW 3: RADAR DE ESPERA EM TEMPO REAL -->
+      <div id="gateViewWaiting" class="auth-form-panel" style="text-align: center; padding: 10px 0;">
+        <div class="radar-spinner"></div>
+        <h3 style="font-size: 1.05rem; font-weight: 800; color: #fff; margin-bottom: 4px;">Pedido Enviado para o Administrador!</h3>
+        
+        <div id="waitingCodeBox" style="background: rgba(6, 182, 212, 0.08); border: 1px dashed rgba(6, 182, 212, 0.4); border-radius: var(--radius-sm); padding: 10px; margin: 12px 0;">
+          <div style="font-size: 0.76rem; color: var(--text-secondary); margin-bottom: 4px;">O teu código de acesso atribuído:</div>
+          <span id="waitingCodeBadge" class="code-display-badge">----</span>
+          <div style="font-size: 0.72rem; color: var(--text-muted); margin-top: 4px;">Guarda este código para futuras entradas</div>
+        </div>
+
+        <p style="font-size: 0.82rem; color: var(--text-secondary); margin-bottom: 14px; line-height: 1.4;">
+          <span class="live-pulse"></span> <strong>Ligação em tempo real ativa:</strong> pode enviar a mensagem direta no WhatsApp ou aguardar aqui. Assim que o Administrador aprovar no painel, o seu telemóvel entra sozinho no Guia!
+        </p>
+        <a id="waitingWhatsappLink" href="#" target="_blank" rel="noopener" onclick="playSendSound()" class="btn-whatsapp" style="width: 100%; justify-content: center; margin-bottom: 10px;">
+          <span>💬 Notificar Administrador por WhatsApp</span>
+        </a>
+        <button type="button" class="btn-secondary" style="width: 100%; font-size: 0.78rem;" onclick="cancelWaitingRequest()">
+          ✕ Cancelar / Voltar ao Início
+        </button>
+      </div>
+
+      <div class="signature-tag subtle">armadilha</div>
+    </div>
+  </div>
+
+  <!-- ============================================================ -->
+  <!-- 2. MAIN APPLICATION                                          -->
+  <!-- ============================================================ -->
+  <div id="appContainer">
+
+    <!-- Header -->
+    <header class="app-header">
+      <div class="header-top">
+        <div class="brand-wrapper">
+          <img src="icon-192.png" alt="Logo" class="brand-logo">
+          <div>
+            <div class="brand-title">
+              Guia Policial <span id="userRoleBadge" class="brand-badge">OPC</span>
+            </div>
+          </div>
+        </div>
+        <div class="header-actions">
+          <!-- Admin Dashboard Trigger (Shown for Admin) -->
+          <button id="adminPanelBtn" class="icon-btn admin-btn" style="display: none; position: relative;" title="Painel de Administração" onclick="openAdminModal()">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/>
+              <circle cx="9" cy="7" r="4"/>
+              <path d="M22 21v-2a4 4 0 0 0-3-3.87"/>
+              <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+            </svg>
+            <span id="headerPendingBadge" style="display: none; position: absolute; top: -4px; right: -4px; background: #ef4444; color: #fff; font-size: 0.65rem; font-weight: 800; border-radius: 99px; min-width: 16px; height: 16px; line-height: 16px; text-align: center; border: 2px solid var(--bg-primary);">0</span>
+          </button>
+          <button id="favFilterBtn" class="icon-btn" title="Favoritos / Guardados" onclick="toggleFavoritesFilter()">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon>
+            </svg>
+          </button>
+          <button id="syncBtn" class="icon-btn" title="Sincronizar Atualizações" onclick="syncData(true)">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/>
+            </svg>
+          </button>
+          <button class="icon-btn" title="Definições" onclick="openSettings()">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="12" r="3"></circle>
+              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+            </svg>
+          </button>
+          <button class="logout-header-btn" title="Terminar Sessão" onclick="logoutApp()">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path>
+              <polyline points="16 17 21 12 16 7"></polyline>
+              <line x1="21" y1="12" x2="9" y2="12"></line>
+            </svg>
+            <span>Sair</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Segmented Navigation Tabs -->
+      <nav class="nav-tabs">
+        <button id="tabExpedientes" class="nav-tab active" onclick="switchMainTab('expedientes')">
+          <span>🚨</span> <span>Expedientes</span>
+        </button>
+        <button id="tabArtigos" class="nav-tab" onclick="switchMainTab('artigos')">
+          <span>📖</span> <span>Prontuário CP/CPP</span>
+        </button>
+        <button id="tabPrazos" class="nav-tab" onclick="switchMainTab('prazos')">
+          <span>⏱️</span> <span>Prazos de Bolso</span>
+        </button>
+      </nav>
+
+      <!-- Status Indicator bar -->
+      <div class="status-bar">
+        <div class="status-indicator">
+          <span id="networkDot" class="dot"></span>
+          <span id="networkStatusText">Online</span>
+        </div>
+        <div id="dataVersionText">60 Crimes + 34 Artigos OPC</div>
+      </div>
+    </header>
+
+    <!-- VIEW 1: EXPEDIENTES & PROCEDIMENTOS -->
+    <div id="viewExpedientes">
+      <div class="search-container">
+        <div class="search-input-wrapper">
+          <span class="search-icon">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="11" cy="11" r="8"></circle>
+              <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+            </svg>
+          </span>
+          <input 
+            type="search" 
+            id="searchInput" 
+            class="search-input" 
+            placeholder="Pesquisar por crime, artigo (ex: 152, 292), droga, arma..." 
+            oninput="handleSearch(this.value)"
+          >
+          <button id="clearSearchBtn" class="clear-search-btn" onclick="clearSearch()">&times;</button>
+        </div>
+      </div>
+
+      <div class="categories-scroll" id="categoriesBar"></div>
+
+      <div class="sub-filters">
+        <button class="sub-pill active" onclick="setNatureFilter('all', this)">Todos</button>
+        <button class="sub-pill" onclick="setNatureFilter('Público', this)">Crimes Públicos</button>
+        <button class="sub-pill" onclick="setNatureFilter('Semipúblico', this)">Crimes Semipúblicos</button>
+      </div>
+
+      <main class="main-content">
+        <div class="results-count">
+          <span id="resultsCount">A carregar...</span>
+          <span id="activeFilterLabel"></span>
+        </div>
+        <div class="crime-list" id="crimeList"></div>
+      </main>
+    </div>
+
+    <!-- VIEW 2: PRONTUÁRIO & ARTIGOS CP/CPP -->
+    <div id="viewArtigos" style="display: none;">
+      <div class="search-container">
+        <div class="search-input-wrapper">
+          <span class="search-icon">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="11" cy="11" r="8"></circle>
+              <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+            </svg>
+          </span>
+          <input 
+            type="search" 
+            id="searchArtigosInput" 
+            class="search-input" 
+            placeholder="Pesquisar artigo (ex: 250, 32, 196), termo (TIR, legítima defesa, 6h)..." 
+            oninput="handleArtigosSearch(this.value)"
+          >
+          <button id="clearArtigosSearchBtn" class="clear-search-btn" onclick="clearArtigosSearch()">&times;</button>
+        </div>
+      </div>
+
+      <div class="categories-scroll" id="artigosThemesBar"></div>
+
+      <main class="main-content">
+        <div class="results-count">
+          <span id="artigosResultsCount">A carregar artigos...</span>
+          <span>CP / CPP Consolidado</span>
+        </div>
+        <div class="crime-list" id="artigosList"></div>
+      </main>
+    </div>
+
+    <!-- VIEW 3: PRAZOS & LIMITES LEGAIS DE BOLSO -->
+    <div id="viewPrazos" style="display: none;">
+      <main class="main-content" style="padding-top: 20px;">
+        <div style="margin-bottom: 16px;">
+          <h2 style="font-size: 1.2rem; font-weight: 800; color: #fff;">Prazos Operacionais e Limites de Bolso</h2>
+          <p style="font-size: 0.85rem; color: var(--text-secondary); margin-top: 4px;">
+            Valores essenciais que o patrulheiro e OPC devem saber no terreno para não incorrer em nulidades ou detenções ilegais.
+          </p>
+        </div>
+
+        <div class="pocket-grid">
+          <!-- 6 Horas -->
+          <div class="pocket-card warning">
+            <div class="pocket-header">
+              <span class="pocket-value" style="color: #fbbf24;">6 HORAS</span>
+              <span class="badge badge-cpp">Art. 250.º CPP</span>
+            </div>
+            <div class="pocket-label">Retenção Máxima para Identificação</div>
+            <div class="pocket-desc">
+              Prazo máximo inultrapassável de permanência na subunidade policial de pessoa suspeita não identificada. Esgotadas as 6 horas, deve ser libertada de imediato.
+            </div>
+          </div>
+
+          <!-- 48 Horas Detido -->
+          <div class="pocket-card danger">
+            <div class="pocket-header">
+              <span class="pocket-value" style="color: #f87171;">48 HORAS</span>
+              <span class="badge badge-cpp">Art. 261.º CPP</span>
+            </div>
+            <div class="pocket-label">Apresentação Judicial de Detido</div>
+            <div class="pocket-desc">
+              Prazo máximo legal e constitucional para apresentar o cidadão detido ao Juiz de Instrução ou Ministério Público. Conta-se minuto a minuto desde a voz de detenção.
+            </div>
+          </div>
+
+          <!-- 6 Meses Queixa -->
+          <div class="pocket-card info">
+            <div class="pocket-header">
+              <span class="pocket-value" style="color: #60a5fa;">6 MESES</span>
+              <span class="badge badge-cp">Art. 115.º CP</span>
+            </div>
+            <div class="pocket-label">Caducidade do Direito de Queixa</div>
+            <div class="pocket-desc">
+              Prazo limite para a vítima apresentar queixa em crimes semipúblicos. Conta a partir do dia em que a vítima teve conhecimento do facto e dos seus autores.
+            </div>
+          </div>
+
+          <!-- 12 Horas Álcool -->
+          <div class="pocket-card warning">
+            <div class="pocket-header">
+              <span class="pocket-value" style="color: #fbbf24;">12 HORAS</span>
+              <span class="badge badge-category">Art. 154.º CE</span>
+            </div>
+            <div class="pocket-label">Impedimento de Conduzir (Álcool)</div>
+            <div class="pocket-desc">
+              Período de impedimento legal de conduzir imposto ao condutor que acuse taxa de alcoolemia positiva (crime ou contraordenação), sob pena de desobediência qualificada.
+            </div>
+          </div>
+
+          <!-- 48 Horas Drogas Condução -->
+          <div class="pocket-card warning">
+            <div class="pocket-header">
+              <span class="pocket-value" style="color: #fbbf24;">48 HORAS</span>
+              <span class="badge badge-category">Art. 154.º CE</span>
+            </div>
+            <div class="pocket-label">Impedimento Conduzir (Drogas)</div>
+            <div class="pocket-desc">
+              Período de impedimento legal de condução notificado ao condutor com resultado positivo nos testes de despistagem de estupefacientes/psicotrópicos.
+            </div>
+          </div>
+
+          <!-- 10 Dias Droga Consumo -->
+          <div class="pocket-card success">
+            <div class="pocket-header">
+              <span class="pocket-value" style="color: #34d399;">10 DIAS</span>
+              <span class="badge badge-category">Lei 30/2000</span>
+            </div>
+            <div class="pocket-label">Limite de Consumo Próprio (CDT)</div>
+            <div class="pocket-desc">
+              Quantidade máxima calculada para consumo médio individual durante 10 dias (Portaria 94/96). Até este limite e sem atos de venda, é MERA CONTRAORDENAÇÃO e NÃO DÁ DETENÇÃO.
+            </div>
+          </div>
+
+          <!-- 07h00 às 21h00 Busca -->
+          <div class="pocket-card info">
+            <div class="pocket-header">
+              <span class="pocket-value" style="color: #60a5fa;">07h às 21h</span>
+              <span class="badge badge-cpp">Art. 177.º CPP</span>
+            </div>
+            <div class="pocket-label">Horário de Busca Domiciliária</div>
+            <div class="pocket-desc">
+              A busca a residência só pode realizar-se entre as 07h00 e as 21h00. Buscas noturnas só em casos excecionais de terrorismo/crime violento ou consentimento escrito.
+            </div>
+          </div>
+
+          <!-- 16 Anos Menoridade -->
+          <div class="pocket-card purple">
+            <div class="pocket-header">
+              <span class="pocket-value" style="color: #c084fc;">16 ANOS</span>
+              <span class="badge badge-cp">Art. 19.º CP</span>
+            </div>
+            <div class="pocket-label">Imputabilidade Criminal</div>
+            <div class="pocket-desc">
+              Menores de 16 anos são penalmente inimputáveis (não respondem criminalmente). Aplica-se a Lei Tutelar Educativa (12 a 16 anos) ou CPCJ (menos de 12 anos).
+            </div>
+          </div>
+
+          <!-- 10 CM Navalha -->
+          <div class="pocket-card danger">
+            <div class="pocket-header">
+              <span class="pocket-value" style="color: #f87171;">10 CM</span>
+              <span class="badge badge-category">Lei 5/2006</span>
+            </div>
+            <div class="pocket-label">Lâmina de Arma Proibida Classe A</div>
+            <div class="pocket-desc">
+              Facas ou navalhas com mecanismo de travão de lâmina de comprimento superior a 10 cm, ou qualquer faca borboleta/mola independentemente do tamanho: CRIME de detenção de arma proibida.
+            </div>
+          </div>
+
+          <!-- 50 UC Valor Elevado -->
+          <div class="pocket-card info">
+            <div class="pocket-header">
+              <span class="pocket-value" style="color: #60a5fa;">50 UC (5.100 €)</span>
+              <span class="badge badge-cp">Art. 202.º CP</span>
+            </div>
+            <div class="pocket-label">Furto / Burla de Valor Elevado</div>
+            <div class="pocket-desc">
+              Prejuízo patrimonial superior a 50 Unidades de Conta (1 UC = 102€). Converte o furto simples e abuso de confiança em crimes qualificados de natureza PÚBLICA.
+            </div>
+          </div>
+        </div>
+      </main>
+    </div>
+
+    <!-- App Signature Watermark -->
+    <footer style="padding: 20px 0 60px 0;">
+      <div class="signature-tag">armadilha</div>
+    </footer>
+
+  </div>
+
+  <!-- ============================================================ -->
+  <!-- 3. PAINEL DE ADMINISTRAÇÃO (ACESSO EXCLUSIVO DO MARCO)       -->
+  <!-- ============================================================ -->
+  <div id="adminModal" class="admin-modal" onclick="closeAdminOnBackdrop(event)">
+    <div class="admin-container">
+      <div class="admin-header">
+        <div class="admin-title">
+          <span>👑 Painel de Administração</span>
+          <span class="admin-badge">ADMIN</span>
+        </div>
+        <button class="icon-btn" onclick="closeAdminModal()">&times;</button>
+      </div>
+
+      <!-- Admin Navigation -->
+      <nav class="admin-nav">
+        <button id="adminTabPending" class="admin-tab active" onclick="switchAdminTab('pending')">
+          Pedidos Pendentes (<span id="adminPendingCount">0</span>)
+        </button>
+        <button id="adminTabApproved" class="admin-tab" onclick="switchAdminTab('approved')">
+          Utilizadores Aprovados (<span id="adminApprovedCount">0</span>)
+        </button>
+        <button id="adminTabInvites" class="admin-tab" onclick="switchAdminTab('invites')">
+          Gerador de Códigos VIP
+        </button>
+        <button id="adminTabSecurity" class="admin-tab" onclick="switchAdminTab('security')">
+          Segurança
+        </button>
+      </nav>
+
+      <div class="admin-body">
+        <!-- SUB-TAB 1: PENDING REQUESTS -->
+        <div id="adminViewPending">
+          <div class="admin-alert-banner">
+            <span style="display: flex; align-items: center;"><span class="live-pulse"></span> <strong>Sincronização Cloud Ativa</strong> (Telemóvel ↔ PC)</span>
+            <button class="btn-secondary" style="padding: 3px 8px; font-size: 0.72rem;" onclick="manualAdminRefresh()">🔄 Atualizar</button>
+          </div>
+          <div style="font-size: 0.85rem; color: var(--text-secondary); margin-bottom: 12px;">
+            Contas de colegas à espera da sua validação para poderem aceder:
+          </div>
+          <div id="adminPendingList"></div>
+        </div>
+
+        <!-- SUB-TAB 2: APPROVED USERS -->
+        <div id="adminViewApproved" style="display: none;">
+          <div style="font-size: 0.85rem; color: var(--text-secondary); margin-bottom: 12px;">
+            Colegas com acesso ativo ao Guia Policial:
+          </div>
+          <div id="adminApprovedList"></div>
+        </div>
+
+        <!-- SUB-TAB 3: INVITE CODES GENERATOR -->
+        <div id="adminViewInvites" style="display: none;">
+          <div style="font-size: 0.85rem; color: var(--text-secondary); margin-bottom: 14px;">
+            Gere códigos de acesso direto para enviar aos seus colegas no WhatsApp (permite entrada imediata sem necessidade de pedir conta):
+          </div>
+          <div style="display: flex; gap: 8px; margin-bottom: 16px;">
+            <input type="text" id="newInviteLabel" class="form-input" placeholder="Identificador (ex: Cabo Silva / Posto)">
+            <button class="btn-primary" style="white-space: nowrap;" onclick="createInviteCode()">+ Gerar Código</button>
+          </div>
+          <div id="adminInvitesList"></div>
+        </div>
+
+        <!-- SUB-TAB 4: SECURITY SETTINGS -->
+        <div id="adminViewSecurity" style="display: none;">
+          <div class="settings-row" style="">
+            <label class="settings-label">Estado da Sincronização em Tempo Real (Direto 0.3s)</label>
+            <div style="background: rgba(16, 185, 129, 0.1); border: 1px solid rgba(16, 185, 129, 0.3); border-radius: var(--radius-sm); padding: 12px; margin-bottom: 12px;">
+              <div style="font-size: 0.85rem; font-weight: 700; color: #34d399; display: flex; align-items: center;">
+                <span class="live-pulse"></span> Barramento em Tempo Real Ativo
+              </div>
+              <div style="font-size: 0.75rem; color: var(--text-secondary); margin-top: 4px;">
+                Ligação ultrarrápida via SSE (< 0.5s) sem limites de pedidos. Os pedidos dos colegas aparecem imediatamente no PC e o telemóvel entra sozinho logo que aprovares!
+              </div>
+            </div>
+            <label class="settings-label">Canal de Sincronização Ativo</label>
+            <input type="text" id="adminCloudSyncUrl" class="form-input" readonly style="opacity: 0.85; font-size: 0.75rem; font-family: monospace;">
+            <div style="display: flex; gap: 8px; margin-top: 8px;">
+              <button class="btn-secondary" style="flex: 1;" onclick="manualAdminRefresh()">Atualizar em Direto</button>
+              <button class="btn-secondary" style="flex: 1;" onclick="playAlertChime()">🔔 Testar Som de Alerta</button>
+            </div>
+          </div>
+
+          <div class="settings-row" style="margin-top: 24px; padding-top: 16px; border-top: 1px solid var(--border-color);">
+            <label class="settings-label" style="color: #f87171;">Zona de Perigo: Repor Base de Dados</label>
+            <p style="font-size: 0.78rem; color: var(--text-secondary); margin-bottom: 8px;">
+              Elimina todos os utilizadores, pedidos pendentes e códigos guardados, iniciando uma base de dados limpa.
+            </p>
+            <button class="btn-reject" style="width: 100%; padding: 10px;" onclick="adminWipeAllDatabases()">
+              🗑️ Limpar Todas as Bases de Dados (Reset Geral)
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============================================================ -->
+  <!-- 4. PROCEDURE DETAIL VIEW (FULL-SCREEN MODAL)                 -->
+  <!-- ============================================================ -->
+  <div id="detailModal" class="modal-overlay">
+    <div class="detail-container">
+      <nav class="detail-nav">
+        <button class="back-btn" onclick="closeDetail()">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+            <polyline points="15 18 9 12 15 6"></polyline>
+          </svg>
+          Voltar
+        </button>
+        <button id="detailStarBtn" class="icon-btn" onclick="toggleCurrentFavorite()">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon>
+          </svg>
+        </button>
+      </nav>
+      <div class="detail-content" id="detailBody"></div>
+    </div>
+  </div>
+
+  <!-- ============================================================ -->
+  <!-- 5. SETTINGS MODAL                                            -->
+  <!-- ============================================================ -->
+  <div id="settingsModal" class="settings-modal" onclick="closeSettingsOnBackdrop(event)">
+    <div class="settings-content">
+      <div class="settings-title">
+        <span>Definições</span>
+        <button class="icon-btn" onclick="closeSettings()">&times;</button>
+      </div>
+      <div class="settings-row">
+        <label class="settings-label">Sessão Atual</label>
+        <div id="settingsSessionInfo" style="font-size: 0.85rem; color: #fff; margin-bottom: 12px;"></div>
+      </div>
+      <div class="settings-row" style="display: flex; gap: 8px;">
+        <button class="btn-primary" onclick="syncData(true)">Forçar Sincronização</button>
+        <button class="btn-secondary" onclick="resetAppData()">Limpar Cache</button>
+      </div>
+      <div class="settings-row" style="margin-top: 10px;">
+        <button id="soundToggleBtn" class="btn-secondary" style="width: 100%;" onclick="toggleSound()">🔊 Sons: Ligados</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast -->
+  <div id="toast" class="toast">
+    <span id="toastMsg">Mensagem</span>
+  </div>
+
+  <!-- App Script -->
+  <script src="app.js?v=8.4"></script>
+</body>
+</html>
