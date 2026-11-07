@@ -1,15 +1,23 @@
 // Guia de Expediente Policial - Core Logic & Real-Time Cloud Engine
 
 // =========================================================================
-// 1. AUTO-UPDATE & ANTI-CACHE ENGINE (v7.0.0)
+// 1. AUTO-UPDATE, ANTI-CACHE & DB RESET ENGINE (v8.0.0)
 // =========================================================================
-const CURRENT_APP_VERSION = 'v7.0.0';
+const CURRENT_APP_VERSION = 'v8.0.0';
 (function autoUpdateCheck() {
   try {
     const storedVersion = localStorage.getItem('opc_app_version');
     if (storedVersion && storedVersion !== CURRENT_APP_VERSION) {
-      console.log('Nova versão detetada! A atualizar cache automaticamente...');
+      console.log('Nova versão v8.0 detetada! A limpar bases de dados e atualizar cache...');
       localStorage.setItem('opc_app_version', CURRENT_APP_VERSION);
+      // Clean DBs on update to start fresh as requested:
+      localStorage.removeItem('opc_users_db');
+      localStorage.removeItem('opc_invites_db');
+      localStorage.removeItem('opc_current_user');
+      localStorage.removeItem('opc_unlocked');
+      localStorage.removeItem('opc_admin_password');
+      localStorage.removeItem('opc_pending_user_id');
+      localStorage.removeItem('opc_sync_topic');
       localStorage.removeItem('opc_expedientes_data');
       localStorage.removeItem('opc_artigos_data');
       if ('caches' in window) {
@@ -67,10 +75,15 @@ let currentArtigoTheme = 'all';
 let currentArtigoSearch = '';
 const expandedArticles = new Set();
 
+// Active Polling & Interval Timers (declared explicitly)
+let adminPollInterval = null;
+let userApprovalPollInterval = null;
+let sessionGuardInterval = null;
+
 // =========================================================================
 // 2. REAL-TIME CLOUD EVENT BUS (NTFY.SH TELEFONE ↔ PC)
 // =========================================================================
-const DEFAULT_SYNC_TOPIC = 'opc_guia_marcoalves_pinhalnovo_v6';
+const DEFAULT_SYNC_TOPIC = 'opc_guia_marcoalves_v8';
 const NTFY_BASE_URL = 'https://ntfy.sh';
 
 function getSyncTopic() {
@@ -122,7 +135,7 @@ function initRealtimeBus() {
   }
 }
 
-// Recover recent events from last 24h cache (requests made while PC was closed)
+// Recover recent events from last 24h cache
 async function catchUpSyncHistory() {
   const topic = getSyncTopic();
   try {
@@ -153,13 +166,17 @@ function handleIncomingSyncEvent(payload, isBackfill = false) {
   const users = getUsers();
   const invites = getInviteCodes();
 
-  // 1. Colleague requested access from mobile
+  // 1. Colleague requested access via form
   if (payload.type === 'REQUEST_ACCESS' && payload.user) {
     const incoming = payload.user;
-    const idx = users.findIndex(u => u.id === incoming.id || (u.contact && u.contact.toLowerCase() === incoming.contact.toLowerCase()));
+    const idx = users.findIndex(u => 
+      u.id === incoming.id || 
+      (incoming.phone && u.phone && u.phone.replace(/\D/g, '') === incoming.phone.replace(/\D/g, '')) ||
+      (incoming.code && u.code && u.code === incoming.code)
+    );
     
     if (idx >= 0) {
-      if (users[idx].status !== 'approved') {
+      if (users[idx].status !== 'approved' && users[idx].status !== 'blocked') {
         users[idx] = { ...users[idx], ...incoming };
       }
     } else {
@@ -184,7 +201,10 @@ function handleIncomingSyncEvent(payload, isBackfill = false) {
   // 2. Marco approved a colleague from PC
   else if (payload.type === 'ACCESS_APPROVED') {
     const userId = payload.userId;
-    const target = users.find(u => u.id === userId);
+    const userCode = payload.code;
+    const userPhone = payload.phone;
+
+    const target = users.find(u => u.id === userId || (userCode && u.code === userCode));
     if (target) {
       target.status = 'approved';
       saveUsersLocally(users);
@@ -192,15 +212,17 @@ function handleIncomingSyncEvent(payload, isBackfill = false) {
 
     // Check if this device is waiting for this approval!
     const pendingId = localStorage.getItem('opc_pending_user_id');
-    if (pendingId === userId || (target && getCurrentUser()?.id === userId)) {
+    const isWaiting = (pendingId && (pendingId === userId || (target && target.id === pendingId)));
+
+    if (isWaiting) {
       localStorage.removeItem('opc_pending_user_id');
-      const approvedUser = payload.user || target || { id: userId, name: payload.userName || 'Colega', role: 'OPC', status: 'approved' };
+      const approvedUser = payload.user || target || { id: userId, name: payload.userName || 'Colega', role: 'OPC', code: userCode, status: 'approved' };
       
       showGateSuccess('✓ Acesso APROVADO pelo Marco! A entrar no sistema...');
       showToast('🎉 Bem-vindo ao Guia Policial!');
       setTimeout(() => {
         setCurrentUser(approvedUser);
-      }, 700);
+      }, 500);
     }
 
     const currentUser = getCurrentUser();
@@ -213,26 +235,37 @@ function handleIncomingSyncEvent(payload, isBackfill = false) {
     }
   }
 
-  // 3. Marco rejected or revoked access
+  // 3. Marco rejected or revoked access (BLOQUEAR / RECUSAR)
   else if (payload.type === 'ACCESS_REVOKED') {
     const userId = payload.userId;
-    const target = users.find(u => u.id === userId);
+    const userCode = payload.code;
+    const userPhone = payload.phone;
+
+    const target = users.find(u => u.id === userId || (userCode && u.code === userCode));
     if (target) {
-      target.status = 'rejected';
+      target.status = 'blocked';
       saveUsersLocally(users);
     }
 
+    // If waiting screen was open
     const pendingId = localStorage.getItem('opc_pending_user_id');
-    if (pendingId === userId) {
+    if (pendingId === userId || (target && target.id === pendingId)) {
       localStorage.removeItem('opc_pending_user_id');
-      cancelWaitingRegistration();
-      showGateError('O seu pedido foi recusado pelo Administrador.');
+      cancelWaitingRequest();
+      showGateError('O seu pedido de acesso foi recusado pelo Administrador.');
     }
 
+    // If colleague is currently logged in on this device: KICK OUT IMMEDIATELY (<0.3s)
     const currentUser = getCurrentUser();
-    if (currentUser && currentUser.id === userId && currentUser.role !== 'admin') {
-      logoutApp();
-      showGateError('A sua sessão foi encerrada pelo Administrador.');
+    if (currentUser && currentUser.role !== 'admin') {
+      const isMatch = (currentUser.id && currentUser.id === userId) ||
+                      (userCode && currentUser.code === userCode) ||
+                      (userPhone && currentUser.phone && currentUser.phone.replace(/\D/g, '') === userPhone.replace(/\D/g, ''));
+      if (isMatch) {
+        logoutApp('A sua conta foi bloqueada ou suspensa pelo Administrador.');
+        showGateError('A sua conta foi bloqueada ou suspensa pelo Administrador.');
+        return;
+      }
     }
 
     if (currentUser && currentUser.role === 'admin') {
@@ -264,8 +297,23 @@ function handleIncomingSyncEvent(payload, isBackfill = false) {
     }
     const currentUser = getCurrentUser();
     if (currentUser && currentUser.inviteCode === payload.code && !payload.active) {
-      logoutApp();
+      logoutApp('O código de convite utilizado foi revogado.');
       showGateError('O código de convite utilizado foi revogado.');
+    }
+  }
+
+  // 6. Global Wipe DB Event
+  else if (payload.type === 'WIPE_ALL_DATA') {
+    const currentUser = getCurrentUser();
+    localStorage.removeItem('opc_users_db');
+    localStorage.removeItem('opc_invites_db');
+    localStorage.removeItem('opc_pending_user_id');
+    if (currentUser && currentUser.role !== 'admin') {
+      logoutApp('A base de dados foi reposta pelo Administrador.');
+      showGateError('A base de dados foi reposta pelo Administrador.');
+    } else if (currentUser && currentUser.role === 'admin') {
+      renderAdminDashboard();
+      updateAdminHeaderBadge();
     }
   }
 }
@@ -299,10 +347,9 @@ function updateAdminHeaderBadge() {
 // =========================================================================
 // 3. AUTHENTICATION & USER MANAGEMENT STATE
 // =========================================================================
-const DEFAULT_ADMIN_PASS = 'pinhalnovo';
 
 function getAdminPassword() {
-  return localStorage.getItem('opc_admin_password') || DEFAULT_ADMIN_PASS;
+  return localStorage.getItem('opc_admin_password') || '';
 }
 
 function getUsers() {
@@ -340,21 +387,44 @@ function isAppUnlocked() {
 }
 
 function unlockApp() {
-  document.getElementById('securityGate').style.display = 'none';
+  const gate = document.getElementById('securityGate');
+  if (gate) gate.style.display = 'none';
 }
 
-function logoutApp() {
-  if (adminPollInterval) clearInterval(adminPollInterval);
-  if (userApprovalPollInterval) clearInterval(userApprovalPollInterval);
+function logoutApp(msg = '') {
+  try {
+    if (adminPollInterval) { clearInterval(adminPollInterval); adminPollInterval = null; }
+    if (userApprovalPollInterval) { clearInterval(userApprovalPollInterval); userApprovalPollInterval = null; }
+    if (sessionGuardInterval) { clearInterval(sessionGuardInterval); sessionGuardInterval = null; }
+  } catch (e) {
+    console.warn('Erro ao limpar timers no logout:', e);
+  }
 
   localStorage.removeItem('opc_unlocked');
   localStorage.removeItem('opc_current_user');
-  document.getElementById('securityGate').style.display = 'flex';
-  document.getElementById('adminPanelBtn').style.display = 'none';
+  localStorage.removeItem('opc_pending_user_id');
+
+  const gate = document.getElementById('securityGate');
+  if (gate) gate.style.display = 'flex';
+
+  const adminBtn = document.getElementById('adminPanelBtn');
+  if (adminBtn) adminBtn.style.display = 'none';
+
+  const input = document.getElementById('unifiedLoginInput');
+  if (input) input.value = '';
+
+  switchGateView('login');
   closeAdminModal();
   closeDetail();
   closeSettings();
-  showToast('Sessão terminada.');
+  closeAdminSetupModal();
+  updateAdminSetupBanner();
+
+  if (msg) {
+    showGateError(msg);
+  } else {
+    showToast('Sessão terminada com sucesso.');
+  }
 }
 
 function applyUserSession(user) {
@@ -375,145 +445,208 @@ function applyUserSession(user) {
       badge.className = 'brand-badge';
     }
     if (adminBtn) adminBtn.style.display = 'none';
-    if (adminPollInterval) clearInterval(adminPollInterval);
+    if (adminPollInterval) {
+      clearInterval(adminPollInterval);
+      adminPollInterval = null;
+    }
   }
 }
 
 // ---------------------------------------------------------------------
-// Auth Portal Tabs & Submissions
+// Gate Views, Setup Modal & Unified Login
 // ---------------------------------------------------------------------
 
-function switchAuthTab(tab) {
-  document.querySelectorAll('.auth-tab-btn').forEach(b => b.classList.remove('active'));
-  document.querySelectorAll('.auth-form-panel').forEach(p => p.classList.remove('active'));
-
+function switchGateView(view) {
   hideGateMessages();
+  const loginPanel = document.getElementById('gateViewLogin');
+  const reqPanel = document.getElementById('gateViewRequest');
+  const waitPanel = document.getElementById('gateViewWaiting');
 
-  if (tab === 'direct') {
-    document.getElementById('authTabDirect').classList.add('active');
-    document.getElementById('panelDirect').classList.add('active');
-  } else if (tab === 'login') {
-    document.getElementById('authTabLogin').classList.add('active');
-    document.getElementById('panelLogin').classList.add('active');
-  } else if (tab === 'register') {
-    document.getElementById('authTabRegister').classList.add('active');
-    document.getElementById('panelRegister').classList.add('active');
+  if (loginPanel) loginPanel.classList.remove('active');
+  if (reqPanel) reqPanel.classList.remove('active');
+  if (waitPanel) waitPanel.classList.remove('active');
+
+  if (view === 'login' && loginPanel) {
+    loginPanel.classList.add('active');
+    const input = document.getElementById('unifiedLoginInput');
+    if (input) setTimeout(() => input.focus(), 100);
+  } else if (view === 'request' && reqPanel) {
+    reqPanel.classList.add('active');
+    const firstInput = document.getElementById('reqName');
+    if (firstInput) setTimeout(() => firstInput.focus(), 100);
+  } else if (view === 'waiting' && waitPanel) {
+    waitPanel.classList.add('active');
   }
 }
 
 function showGateError(msg) {
   const el = document.getElementById('gateError');
-  el.textContent = msg;
-  el.style.display = 'block';
-  document.getElementById('gateSuccess').style.display = 'none';
+  if (el) {
+    el.textContent = msg;
+    el.style.display = 'block';
+  }
+  const succ = document.getElementById('gateSuccess');
+  if (succ) succ.style.display = 'none';
 }
 
 function showGateSuccess(msg) {
   const el = document.getElementById('gateSuccess');
-  el.textContent = msg;
-  el.style.display = 'block';
-  document.getElementById('gateError').style.display = 'none';
+  if (el) {
+    el.textContent = msg;
+    el.style.display = 'block';
+  }
+  const err = document.getElementById('gateError');
+  if (err) err.style.display = 'none';
 }
 
 function hideGateMessages() {
-  document.getElementById('gateError').style.display = 'none';
-  document.getElementById('gateSuccess').style.display = 'none';
+  const err = document.getElementById('gateError');
+  if (err) err.style.display = 'none';
+  const succ = document.getElementById('gateSuccess');
+  if (succ) succ.style.display = 'none';
 }
 
-// 1. Direct Submit: Admin Password or Invite Code
-async function handleDirectSubmit(e) {
+function updateAdminSetupBanner() {
+  const banner = document.getElementById('adminFirstRunNotice');
+  if (banner) {
+    const adminPass = getAdminPassword();
+    banner.style.display = adminPass ? 'none' : 'flex';
+  }
+}
+
+function openAdminSetupModal() {
+  const modal = document.getElementById('adminSetupModal');
+  if (modal) {
+    modal.style.display = 'flex';
+    const input = document.getElementById('setupNewAdminPass');
+    if (input) setTimeout(() => input.focus(), 150);
+  }
+}
+
+function closeAdminSetupModal() {
+  const modal = document.getElementById('adminSetupModal');
+  if (modal) modal.style.display = 'none';
+}
+
+function closeAdminSetupOnBackdrop(e) {
+  if (e.target.id === 'adminSetupModal') closeAdminSetupModal();
+}
+
+function handleAdminSetupSubmit(e) {
   e.preventDefault();
-  const input = document.getElementById('directPinInput').value.trim();
+  const p1 = (document.getElementById('setupNewAdminPass').value || '').trim();
+  const p2 = (document.getElementById('setupNewAdminPassConfirm').value || '').trim();
+
+  if (!p1) {
+    alert('A senha de Administrador não pode estar em branco.');
+    return;
+  }
+  if (p1 !== p2) {
+    alert('As senhas introduzidas não coincidem.');
+    return;
+  }
+
+  localStorage.setItem('opc_admin_password', p1);
+  closeAdminSetupModal();
+  updateAdminSetupBanner();
+
+  const adminUser = {
+    id: 'admin_root',
+    name: 'Administrador Marco',
+    role: 'admin'
+  };
+  setCurrentUser(adminUser);
+  showToast('👑 Senha de Administrador criada com sucesso! Bem-vindo Marco.');
+}
+
+// 1. Unified Login (Admin Password or User Code)
+async function handleUnifiedLogin(e) {
+  e.preventDefault();
+  hideGateMessages();
+  const input = (document.getElementById('unifiedLoginInput').value || '').trim();
   if (!input) return;
 
   const adminPass = getAdminPassword();
 
-  // Check Admin Master Passwords (Marco)
-  if (input.toLowerCase() === adminPass.toLowerCase() || input.toLowerCase() === 'admin.pinhalnovo' || input.toLowerCase() === 'pinhalnovo') {
+  // If no admin password has been set yet, prompt setup
+  if (!adminPass) {
+    openAdminSetupModal();
+    return;
+  }
+
+  // 1. Check Admin Password
+  if (input === adminPass) {
     const adminUser = {
       id: 'admin_root',
       name: 'Administrador Marco',
-      role: 'admin',
-      email: 'admin@local'
+      role: 'admin'
     };
     setCurrentUser(adminUser);
     showToast('Bem-vindo, Administrador Marco!');
     return;
   }
 
-  // Check Cloud Invites
-  await catchUpSyncHistory();
-  const invites = getInviteCodes();
-  const matchedInvite = invites.find(inv => inv.code.toUpperCase() === input.toUpperCase() && inv.active);
-
-  if (matchedInvite) {
-    const inviteUser = {
-      id: 'inv_' + matchedInvite.code,
-      name: matchedInvite.label || 'Colega Autorizado',
-      role: 'OPC',
-      inviteCode: matchedInvite.code
-    };
-    setCurrentUser(inviteUser);
-    showToast(`Acesso concedido com convite: ${matchedInvite.label}`);
-    return;
-  }
-
-  showGateError('Código ou senha incorreta!');
-  document.getElementById('directPinInput').value = '';
-}
-
-// 2. User Account Login
-async function handleAccountLogin(e) {
-  e.preventDefault();
-  const contact = document.getElementById('loginEmail').value.trim().toLowerCase();
-  const pass = document.getElementById('loginPassword').value;
-
-  if (!contact || !pass) {
-    showGateError('Por favor preencha todos os campos.');
-    return;
-  }
-
   showToast('A verificar credenciais...');
   await catchUpSyncHistory();
   const users = getUsers();
-  const user = users.find(u => (u.contact && u.contact.toLowerCase() === contact) || (u.email && u.email.toLowerCase() === contact));
 
-  if (!user) {
-    showGateError('Conta não encontrada! Se ainda não se registou, vá à aba "Pedir Acesso".');
-    return;
+  // 2. Check Colleague by Code (or Phone)
+  const cleanInputDigits = input.replace(/\D/g, '');
+  const matchedUser = users.find(u => {
+    if (u.code && u.code.toLowerCase() === input.toLowerCase()) return true;
+    if (cleanInputDigits && u.phone && u.phone.replace(/\D/g, '') === cleanInputDigits) return true;
+    return false;
+  });
+
+  if (matchedUser) {
+    if (matchedUser.status === 'approved') {
+      setCurrentUser(matchedUser);
+      showToast(`Bem-vindo, ${matchedUser.role ? matchedUser.role + ' ' : ''}${matchedUser.name}!`);
+      return;
+    } else if (matchedUser.status === 'blocked' || matchedUser.status === 'rejected') {
+      showGateError('Acesso bloqueado ou recusado pelo Administrador.');
+      return;
+    } else { // pending
+      showGateSuccess(`O seu pedido com o código ${matchedUser.code} aguarda aprovação pelo Marco.`);
+      startUserWaitingScreen(matchedUser);
+      return;
+    }
   }
 
-  if (user.password !== pass) {
-    showGateError('Palavra-passe incorreta!');
-    return;
+  // 3. Check VIP Invites
+  const invites = getInviteCodes();
+  const matchedInvite = invites.find(inv => inv.code.toUpperCase() === input.toUpperCase());
+  if (matchedInvite) {
+    if (matchedInvite.active) {
+      const inviteUser = {
+        id: 'inv_' + matchedInvite.code,
+        name: matchedInvite.label || 'Colega Autorizado',
+        role: 'OPC',
+        inviteCode: matchedInvite.code
+      };
+      setCurrentUser(inviteUser);
+      showToast(`Acesso concedido com convite: ${matchedInvite.label}`);
+      return;
+    } else {
+      showGateError('Este código de convite foi revogado.');
+      return;
+    }
   }
 
-  if (user.status === 'pending') {
-    showGateError('A sua conta aguarda aprovação pelo Administrador Marco. Foi colocada na lista de espera.');
-    startUserWaitingScreen(user);
-    return;
-  }
-
-  if (user.status === 'rejected') {
-    showGateError('Acesso recusado pelo Administrador.');
-    return;
-  }
-
-  if (user.status === 'approved') {
-    setCurrentUser(user);
-    showToast(`Bem-vindo, ${user.name}!`);
-  }
+  showGateError('Código ou senha incorreta!');
+  document.getElementById('unifiedLoginInput').value = '';
 }
 
-// 3. User Registration (Live Real-Time to Cloud Bus)
-async function handleAccountRegister(e) {
+// 2. Colleague Access Request (Nome, Posto, Unidade, Telemóvel/WhatsApp)
+async function handleAccessRequest(e) {
   e.preventDefault();
-  const name = document.getElementById('regName').value.trim();
-  const role = document.getElementById('regRole').value.trim();
-  const contact = document.getElementById('regContact').value.trim().toLowerCase();
-  const password = document.getElementById('regPassword').value;
+  hideGateMessages();
+  const name = document.getElementById('reqName').value.trim();
+  const role = document.getElementById('reqRole').value.trim();
+  const unit = document.getElementById('reqUnit').value.trim();
+  const phone = document.getElementById('reqPhone').value.trim();
 
-  if (!name || !role || !contact || !password) {
+  if (!name || !role || !unit || !phone) {
     showGateError('Preencha todos os campos obrigatórios.');
     return;
   }
@@ -521,27 +654,44 @@ async function handleAccountRegister(e) {
   showToast('A enviar pedido em tempo real...');
   await catchUpSyncHistory();
   const users = getUsers();
-  const exists = users.find(u => (u.contact && u.contact.toLowerCase() === contact) || (u.email && u.email.toLowerCase() === contact));
 
-  if (exists) {
-    if (exists.status === 'approved') {
-      showGateSuccess('Esta conta já se encontra APROVADA! Vá à aba "Entrar com Conta".');
+  const cleanPhone = phone.replace(/\D/g, '');
+  const existing = users.find(u => u.phone && u.phone.replace(/\D/g, '') === cleanPhone);
+
+  if (existing) {
+    if (existing.status === 'approved') {
+      showGateSuccess(`Conta já aprovada! O teu código é: ${existing.code}`);
+      document.getElementById('unifiedLoginInput').value = existing.code;
+      switchGateView('login');
+      return;
+    } else if (existing.status === 'blocked') {
+      showGateError('O acesso para este número foi bloqueado pelo Administrador.');
       return;
     } else {
-      showGateSuccess('Este pedido já foi enviado e aguarda aprovação de Marco.');
-      startUserWaitingScreen(exists);
-      broadcastSyncEvent({ type: 'REQUEST_ACCESS', user: exists });
+      // Existing pending - update info and show waiting
+      existing.name = name;
+      existing.role = role;
+      existing.unit = unit;
+      saveUsersLocally(users);
+      await broadcastSyncEvent({ type: 'REQUEST_ACCESS', user: existing });
+      startUserWaitingScreen(existing);
       return;
     }
   }
+
+  // Generate 4-digit code (1000 - 9999)
+  let newCode;
+  do {
+    newCode = String(Math.floor(1000 + Math.random() * 9000));
+  } while (users.some(u => u.code === newCode));
 
   const newUser = {
     id: 'usr_' + Date.now(),
     name,
     role,
-    contact,
-    email: contact,
-    password,
+    unit,
+    phone,
+    code: newCode,
     status: 'pending',
     createdAt: new Date().toISOString()
   };
@@ -549,13 +699,12 @@ async function handleAccountRegister(e) {
   users.unshift(newUser);
   saveUsersLocally(users);
 
-  // Broadcast instantly to Marco's PC (< 0.3s latency via ntfy SSE)
+  // Broadcast instantly to Marco's PC (< 0.3s latency)
   await broadcastSyncEvent({
     type: 'REQUEST_ACCESS',
     user: newUser
   });
 
-  // Start real-time waiting screen on user's phone!
   startUserWaitingScreen(newUser);
 }
 
@@ -564,31 +713,40 @@ function startUserWaitingScreen(user) {
   if (!user) return;
   localStorage.setItem('opc_pending_user_id', user.id);
 
-  switchAuthTab('register');
-  document.getElementById('regFormElement').style.display = 'none';
-  const waitScreen = document.getElementById('regWaitingScreen');
-  waitScreen.style.display = 'block';
+  switchGateView('waiting');
 
-  // Format WhatsApp Link
-  const waLink = document.getElementById('regWhatsappLink');
-  const msg = encodeURIComponent(`Olá Marco! Criei conta no Guia Policial (OPC):\nNome: ${user.name}\nPosto: ${user.role}\nContacto: ${user.contact}\nPodes aprovar o meu acesso no teu painel?`);
-  waLink.href = `https://wa.me/?text=${msg}`;
+  const badge = document.getElementById('waitingCodeBadge');
+  if (badge) badge.textContent = user.code || '----';
 
-  showGateSuccess('Pedido enviado! A aguardar aprovação em tempo real...');
+  const waLink = document.getElementById('waitingWhatsappLink');
+  if (waLink) {
+    const msg = encodeURIComponent(
+      `Olá Marco! Pedi acesso ao Guia Policial (OPC):\n` +
+      `👤 Nome: ${user.name}\n` +
+      `🎖️ Posto: ${user.role}\n` +
+      `🏢 Unidade: ${user.unit || 'OPC'}\n` +
+      `📱 WhatsApp: ${user.phone}\n` +
+      `🔑 Código Provisório: *${user.code}*\n\n` +
+      `Podes aprovar o meu código no teu painel?`
+    );
+    waLink.href = `https://wa.me/?text=${msg}`;
+  }
 
-  // Ensure real-time connection is alive
+  showGateSuccess(`Código gerado: ${user.code}. A aguardar validação em tempo real...`);
+
   initRealtimeBus();
 
-  // Periodic catch-up backup check every 10s
   if (userApprovalPollInterval) clearInterval(userApprovalPollInterval);
-  userApprovalPollInterval = setInterval(catchUpSyncHistory, 10000);
+  userApprovalPollInterval = setInterval(catchUpSyncHistory, 5000);
 }
 
-function cancelWaitingRegistration() {
-  if (userApprovalPollInterval) clearInterval(userApprovalPollInterval);
+function cancelWaitingRequest() {
+  if (userApprovalPollInterval) {
+    clearInterval(userApprovalPollInterval);
+    userApprovalPollInterval = null;
+  }
   localStorage.removeItem('opc_pending_user_id');
-  document.getElementById('regFormElement').style.display = 'block';
-  document.getElementById('regWaitingScreen').style.display = 'none';
+  switchGateView('login');
   hideGateMessages();
 }
 
@@ -601,8 +759,7 @@ function startAdminRealTimePolling() {
   catchUpSyncHistory();
 
   if (adminPollInterval) clearInterval(adminPollInterval);
-  // Backup poll every 15 seconds to ensure no packet drops
-  adminPollInterval = setInterval(catchUpSyncHistory, 15000);
+  adminPollInterval = setInterval(catchUpSyncHistory, 12000);
 }
 
 async function manualAdminRefresh() {
@@ -653,21 +810,21 @@ function switchAdminTab(tab) {
 function renderAdminDashboard() {
   const users = getUsers();
   const pending = users.filter(u => u.status === 'pending');
-  const approved = users.filter(u => u.status === 'approved');
+  const approved = users.filter(u => u.status === 'approved' || u.status === 'blocked');
 
-  // Update badge counters
+  // Badge counters
   const pendCount = document.getElementById('adminPendingCount');
   const appCount = document.getElementById('adminApprovedCount');
   if (pendCount) pendCount.textContent = pending.length;
   if (appCount) appCount.textContent = approved.length;
 
-  // Render Pending List
+  // 1. Pending List
   const pendContainer = document.getElementById('adminPendingList');
   if (pendContainer) {
     if (pending.length === 0) {
       pendContainer.innerHTML = `
         <div style="text-align: center; padding: 24px; color: var(--text-muted);">
-          Nenhum pedido de conta pendente no momento.
+          Nenhum pedido de acesso pendente no momento.
         </div>
       `;
     } else {
@@ -675,29 +832,40 @@ function renderAdminDashboard() {
         <div class="user-card">
           <div class="user-card-header">
             <span class="user-name">${u.name}</span>
-            <span class="badge badge-pending">Aguardando Validação</span>
+            <span class="badge badge-pending">Pendente</span>
           </div>
-          <div class="user-meta">
+          <div class="user-meta" style="margin-top: 6px;">
             <span>🎖️ ${u.role}</span>
-            <span>📱 ${u.contact}</span>
-            <span>📅 ${new Date(u.createdAt).toLocaleTimeString('pt-PT', { hour: '2-digit', minute: '2-digit' })}</span>
+            <span>🏢 ${u.unit || 'OPC'}</span>
+            <span>📱 ${u.phone}</span>
+          </div>
+          <div style="margin: 8px 0; display: flex; align-items: center; gap: 8px;">
+            <span style="font-size: 0.8rem; color: var(--text-secondary);">Código atribuído:</span>
+            <span class="code-display-badge">${u.code || '----'}</span>
           </div>
           <div class="user-actions">
-            <button class="btn-approve" onclick="adminApproveUser('${u.id}')">✓ Aceitar Imediatamente</button>
-            <button class="btn-reject" onclick="adminRejectUser('${u.id}')">✕ Recusar</button>
+            <button class="btn-whatsapp" onclick="adminApproveUser('${u.id}', true)">
+              💬 Aprovar e Enviar WhatsApp
+            </button>
+            <button class="btn-approve" onclick="adminApproveUser('${u.id}', false)">
+              ✓ Aprovar Apenas
+            </button>
+            <button class="btn-reject" onclick="adminRejectUser('${u.id}')">
+              ✕ Recusar
+            </button>
           </div>
         </div>
       `).join('');
     }
   }
 
-  // Render Approved List
+  // 2. Approved / Blocked List
   const appContainer = document.getElementById('adminApprovedList');
   if (appContainer) {
     if (approved.length === 0) {
       appContainer.innerHTML = `
         <div style="text-align: center; padding: 24px; color: var(--text-muted);">
-          Nenhum utilizador com conta registada aprovada.
+          Nenhum utilizador registado ainda.
         </div>
       `;
     } else {
@@ -705,26 +873,46 @@ function renderAdminDashboard() {
         <div class="user-card">
           <div class="user-card-header">
             <span class="user-name">${u.name}</span>
-            <span class="badge badge-approved">Aprovado</span>
+            <span class="badge ${u.status === 'blocked' ? 'badge-blocked' : 'badge-approved'}">
+              ${u.status === 'blocked' ? 'Bloqueado' : 'Aprovado'}
+            </span>
           </div>
-          <div class="user-meta">
+          <div class="user-meta" style="margin-top: 6px;">
             <span>🎖️ ${u.role}</span>
-            <span>📱 ${u.contact}</span>
+            <span>🏢 ${u.unit || 'OPC'}</span>
+            <span>📱 ${u.phone}</span>
+          </div>
+          <div style="margin: 8px 0; display: flex; align-items: center; gap: 8px;">
+            <span style="font-size: 0.8rem; color: var(--text-secondary);">Código de Acesso:</span>
+            <span class="code-display-badge">${u.code || '----'}</span>
           </div>
           <div class="user-actions">
-            <button class="btn-reject" onclick="adminRevokeUser('${u.id}')">🔒 Bloquear</button>
-            <button class="btn-secondary" style="padding: 4px 10px; font-size: 0.75rem;" onclick="adminDeleteUser('${u.id}')">🗑️ Eliminar</button>
+            <button class="btn-whatsapp" style="padding: 5px 10px; font-size: 0.75rem;" onclick="sendUserCodeViaWhatsApp('${u.id}')">
+              💬 Enviar WhatsApp
+            </button>
+            ${u.status === 'blocked' ? `
+              <button class="btn-approve" style="padding: 5px 10px; font-size: 0.75rem;" onclick="adminUnblockUser('${u.id}')">
+                🔓 Desbloquear
+              </button>
+            ` : `
+              <button class="btn-reject" style="padding: 5px 10px; font-size: 0.75rem;" onclick="adminRevokeUser('${u.id}')">
+                🔒 Bloquear
+              </button>
+            `}
+            <button class="btn-secondary" style="padding: 5px 10px; font-size: 0.75rem;" onclick="adminDeleteUser('${u.id}')">
+              🗑️ Eliminar
+            </button>
           </div>
         </div>
       `).join('');
     }
   }
 
-  // Render Invites List
+  // 3. Invites List
   renderAdminInvites();
 }
 
-async function adminApproveUser(id) {
+async function adminApproveUser(id, sendWhatsApp = false) {
   const users = getUsers();
   const u = users.find(x => x.id === id);
   if (!u) return;
@@ -738,11 +926,36 @@ async function adminApproveUser(id) {
   await broadcastSyncEvent({
     type: 'ACCESS_APPROVED',
     userId: id,
+    code: u.code,
+    phone: u.phone,
     userName: u.name,
     user: u
   });
 
-  showToast(`✓ ${u.name} APROVADO! O telemóvel dele entrará automaticamente.`);
+  if (sendWhatsApp) {
+    sendUserCodeViaWhatsApp(id);
+  }
+
+  showToast(`✓ ${u.name} APROVADO! Código: ${u.code}`);
+}
+
+function sendUserCodeViaWhatsApp(id) {
+  const users = getUsers();
+  const u = users.find(x => x.id === id);
+  if (!u) return;
+
+  let phoneNum = (u.phone || '').replace(/\D/g, '');
+  if (phoneNum.length === 9) phoneNum = '351' + phoneNum;
+
+  const url = window.location.href.split('?')[0].split('#')[0];
+  const msg = encodeURIComponent(
+    `Olá ${u.name}! O teu acesso ao Guia Policial (OPC) foi aprovado.\n\n` +
+    `🔑 O teu Código de Acesso: *${u.code}*\n` +
+    `📲 Acede aqui: ${url}\n\n` +
+    `Basta colocar este código no ecrã de entrada para acederes diretamente!`
+  );
+
+  window.open(`https://wa.me/${phoneNum}?text=${msg}`, '_blank');
 }
 
 async function adminRejectUser(id) {
@@ -757,7 +970,9 @@ async function adminRejectUser(id) {
 
   await broadcastSyncEvent({
     type: 'ACCESS_REVOKED',
-    userId: id
+    userId: id,
+    code: u.code,
+    phone: u.phone
   });
 
   showToast('Pedido recusado.');
@@ -768,38 +983,84 @@ async function adminRevokeUser(id) {
   const u = users.find(x => x.id === id);
   if (!u) return;
 
-  u.status = 'rejected';
+  u.status = 'blocked';
   saveUsersLocally(users);
   renderAdminDashboard();
   updateAdminHeaderBadge();
 
   await broadcastSyncEvent({
     type: 'ACCESS_REVOKED',
-    userId: id
+    userId: id,
+    code: u.code,
+    phone: u.phone
   });
 
-  showToast('Acesso bloqueado.');
+  showToast(`Acesso de ${u.name} BLOQUEADO! Sessão terminada imediatamente.`);
+}
+
+async function adminUnblockUser(id) {
+  const users = getUsers();
+  const u = users.find(x => x.id === id);
+  if (!u) return;
+
+  u.status = 'approved';
+  saveUsersLocally(users);
+  renderAdminDashboard();
+  updateAdminHeaderBadge();
+
+  await broadcastSyncEvent({
+    type: 'ACCESS_APPROVED',
+    userId: id,
+    code: u.code,
+    phone: u.phone,
+    user: u
+  });
+
+  showToast(`Acesso de ${u.name} REATIVADO.`);
 }
 
 async function adminDeleteUser(id) {
-  if (confirm('Eliminar permanentemente este utilizador?')) {
-    let users = getUsers();
-    users = users.filter(x => x.id !== id);
-    saveUsersLocally(users);
+  const users = getUsers();
+  const u = users.find(x => x.id === id);
+  const name = u ? u.name : 'utilizador';
+
+  if (confirm(`Eliminar permanentemente ${name}?`)) {
+    const updatedUsers = users.filter(x => x.id !== id);
+    saveUsersLocally(updatedUsers);
     renderAdminDashboard();
     updateAdminHeaderBadge();
 
     await broadcastSyncEvent({
       type: 'ACCESS_REVOKED',
-      userId: id
+      userId: id,
+      code: u?.code,
+      phone: u?.phone
     });
 
     showToast('Utilizador eliminado.');
   }
 }
 
+async function adminWipeAllDatabases() {
+  if (!confirm('ATENÇÃO: Tem a certeza que deseja LIMPAR TODAS AS BASES DE DADOS?\n\nTodos os utilizadores, pedidos pendentes e convites serão eliminados.')) {
+    return;
+  }
+
+  localStorage.removeItem('opc_users_db');
+  localStorage.removeItem('opc_invites_db');
+  localStorage.removeItem('opc_pending_user_id');
+
+  await broadcastSyncEvent({
+    type: 'WIPE_ALL_DATA'
+  });
+
+  renderAdminDashboard();
+  updateAdminHeaderBadge();
+  showToast('Base de dados completamente limpa!');
+}
+
 // ---------------------------------------------------------------------
-// Invite Code Generator (VIP Access without Account creation)
+// Invite Code Generator (VIP Access)
 // ---------------------------------------------------------------------
 
 function renderAdminInvites() {
@@ -819,14 +1080,14 @@ function renderAdminInvites() {
   container.innerHTML = invites.map(inv => `
     <div class="user-card">
       <div class="user-card-header">
-        <span style="font-size: 1.1rem; font-weight: 800; color: var(--accent-cyan); letter-spacing: 2px;">
+        <span class="code-display-badge">
           ${inv.code}
         </span>
         <span class="badge ${inv.active ? 'badge-approved' : 'badge-rejected'}">
           ${inv.active ? 'Ativo' : 'Revogado'}
         </span>
       </div>
-      <div style="font-size: 0.82rem; color: var(--text-secondary);">
+      <div style="font-size: 0.82rem; color: var(--text-secondary); margin-top: 6px;">
         Para: <strong>${inv.label}</strong> • Criado em: ${new Date(inv.createdAt).toLocaleDateString('pt-PT')}
       </div>
       <div class="user-actions">
@@ -886,7 +1147,7 @@ async function toggleInviteActive(code) {
 
 function copyInviteToWhatsapp(code, label) {
   const url = window.location.href.split('?')[0].split('#')[0];
-  const msg = `Olá ${label}! Segue o teu código de acesso exclusivo ao Guia Policial (OPC):\n\n🔑 Código: *${code}*\n📲 Acede aqui: ${url}\n\nAo abrir o link, basta colocar o código no campo inicial para entrar imediatamente!`;
+  const msg = `Olá ${label}! Segue o teu código de acesso exclusivo ao Guia Policial (OPC):\n\n🔑 Código: *${code}*\n📲 Acede aqui: ${url}\n\nAo abrir o link, basta colocar o código no campo de entrada para aceder diretamente!`;
   
   if (navigator.clipboard) {
     navigator.clipboard.writeText(msg).then(() => {
@@ -910,6 +1171,7 @@ function saveAdminPassword() {
   }
   localStorage.setItem('opc_admin_password', newPass);
   input.value = '';
+  updateAdminSetupBanner();
   showToast('Senha de Administrador alterada com sucesso!');
 }
 
@@ -1674,9 +1936,7 @@ if ('serviceWorker' in navigator) {
 // =========================================================================
 
 async function checkPendingApprovalOnLoad(pendingId) {
-  switchAuthTab('register');
-  document.getElementById('regFormElement').style.display = 'none';
-  document.getElementById('regWaitingScreen').style.display = 'block';
+  switchGateView('waiting');
   showGateSuccess('A verificar aprovação com o Administrador Marco...');
 
   initRealtimeBus();
@@ -1692,12 +1952,12 @@ async function checkPendingApprovalOnLoad(pendingId) {
       showToast('🎉 Bem-vindo, ' + liveUser.name + '!');
       setTimeout(() => {
         setCurrentUser(liveUser);
-      }, 700);
+      }, 500);
       return;
-    } else if (liveUser.status === 'rejected') {
+    } else if (liveUser.status === 'rejected' || liveUser.status === 'blocked') {
       localStorage.removeItem('opc_pending_user_id');
-      showGateError('O seu pedido de acesso foi recusado pelo Administrador.');
-      cancelWaitingRegistration();
+      cancelWaitingRequest();
+      showGateError('O seu pedido de acesso foi recusado ou bloqueado pelo Administrador.');
       return;
     } else {
       // Still pending
@@ -1710,33 +1970,42 @@ async function checkPendingApprovalOnLoad(pendingId) {
 }
 
 function startSessionGuard(user) {
-  // Periodically check if session remains valid
-  setInterval(async () => {
-    await catchUpSyncHistory();
+  if (sessionGuardInterval) clearInterval(sessionGuardInterval);
+  // Fast periodic check every 3.5 seconds to guarantee instant lock if revoked
+  sessionGuardInterval = setInterval(async () => {
+    const currentUser = getCurrentUser();
+    if (!currentUser || currentUser.role === 'admin') return;
+
     const users = getUsers();
     const invites = getInviteCodes();
 
-    if (user.inviteCode) {
-      const inv = invites.find(i => i.code === user.inviteCode);
+    if (currentUser.inviteCode) {
+      const inv = invites.find(i => i.code === currentUser.inviteCode);
       if (inv && !inv.active) {
-        logoutApp();
+        logoutApp('O seu código de convite foi revogado.');
         showGateError('O seu código de convite foi revogado.');
       }
-    } else if (user.id && user.role !== 'admin') {
-      const liveUser = users.find(u => u.id === user.id);
-      if (!liveUser || liveUser.status !== 'approved') {
-        logoutApp();
-        showGateError('A sua sessão foi encerrada pelo Administrador.');
+    } else {
+      const liveUser = users.find(u => 
+        (currentUser.id && u.id === currentUser.id) || 
+        (currentUser.code && u.code === currentUser.code)
+      );
+      if (liveUser && (liveUser.status === 'blocked' || liveUser.status === 'rejected')) {
+        logoutApp('A sua conta foi bloqueada pelo Administrador.');
+        showGateError('A sua conta foi bloqueada pelo Administrador.');
       }
     }
-  }, 45000);
+  }, 3500);
 }
 
 document.addEventListener('DOMContentLoaded', () => {
-  // 1. Connect real-time event stream immediately
+  // 1. Update Admin setup banner status
+  updateAdminSetupBanner();
+
+  // 2. Connect real-time event stream immediately
   initRealtimeBus();
 
-  // 2. Check session or pending request
+  // 3. Check session or pending request
   const user = getCurrentUser();
 
   if (isAppUnlocked() && user) {
@@ -1749,7 +2018,9 @@ document.addEventListener('DOMContentLoaded', () => {
     if (pendingId) {
       checkPendingApprovalOnLoad(pendingId);
     } else {
-      document.getElementById('securityGate').style.display = 'flex';
+      const gate = document.getElementById('securityGate');
+      if (gate) gate.style.display = 'flex';
+      switchGateView('login');
       catchUpSyncHistory();
     }
   }

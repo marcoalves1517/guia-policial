@@ -1,9 +1,9 @@
-const CACHE_NAME = 'guia-policial-v7';
+const CACHE_NAME = 'guia-policial-v8';
 const ASSETS_TO_CACHE = [
   './',
   './index.html',
-  './styles.css?v=7.0',
-  './app.js?v=7.0',
+  './styles.css?v=8.0',
+  './app.js?v=8.0',
   './expedientes.json',
   './artigos_opc.json',
   './manifest.json',

@@ -20,12 +20,12 @@
   <link rel="apple-touch-icon" href="icon-192.png">
 
   <!-- Stylesheet -->
-  <link rel="stylesheet" href="styles.css?v=7.0">
+  <link rel="stylesheet" href="styles.css?v=8.0">
 </head>
 <body>
 
   <!-- ============================================================ -->
-  <!-- 1. PORTAL DE AUTENTICAÇÃO / ACESSO OPERACIONAL               -->
+  <!-- 1. PORTAL DE AUTENTICAÇÃO OPERACIONAL                        -->
   <!-- ============================================================ -->
   <div id="securityGate" class="security-gate">
     <div class="security-box">
@@ -38,88 +38,109 @@
       <h2 class="gate-title">Guia Policial OPC</h2>
       <p class="gate-subtitle">Acesso restrito e reservado a forças de segurança</p>
 
-      <!-- Auth Switcher Tabs -->
-      <div class="auth-tabs">
-        <button id="authTabDirect" class="auth-tab-btn active" onclick="switchAuthTab('direct')">🔑 Senha / Admin</button>
-        <button id="authTabLogin" class="auth-tab-btn" onclick="switchAuthTab('login')">👤 Entrar com Conta</button>
-        <button id="authTabRegister" class="auth-tab-btn" onclick="switchAuthTab('register')">📝 Pedir Acesso</button>
+      <!-- Banner de Primeiro Acesso Admin (apenas se a senha ainda não estiver definida) -->
+      <div id="adminFirstRunNotice" class="admin-setup-banner" style="display: none;" onclick="openAdminSetupModal()">
+        <span>⭐</span> <span>Primeiro Acesso: clique aqui para definir a sua senha de Admin</span>
       </div>
 
       <!-- Messages Alert -->
       <div id="gateError" class="gate-error"></div>
       <div id="gateSuccess" class="gate-success"></div>
 
-      <!-- PANEL 1: ADMIN MASTER KEY / INVITE CODE -->
-      <div id="panelDirect" class="auth-form-panel active">
-        <form onsubmit="handleDirectSubmit(event)">
+      <!-- VIEW 1: LOGIN SIMPLES COM CÓDIGO OU SENHA ADMIN -->
+      <div id="gateViewLogin" class="auth-form-panel active">
+        <form onsubmit="handleUnifiedLogin(event)">
           <div class="form-group">
-            <label class="form-label">Senha de Admin ou Código de Acesso</label>
-            <input type="password" id="directPinInput" class="form-input" placeholder="••••••••" autocomplete="off" autofocus>
+            <label class="form-label">Código de Acesso ou Senha de Administrador</label>
+            <input type="password" id="unifiedLoginInput" class="form-input" placeholder="ex: 4821 ou senha admin" autocomplete="off" autofocus required>
           </div>
-          <button type="submit" class="btn-primary" style="width: 100%; margin-top: 8px;">Entrar no Guia</button>
+          <button type="submit" class="btn-primary" style="width: 100%; margin-top: 8px;">🔓 Entrar no Guia Policial</button>
         </form>
-        <div style="font-size: 0.75rem; color: var(--text-muted); margin-top: 12px; text-align: center;">
-          Admin: insira a sua senha de administrador para gerir contas e expedientes.
-        </div>
-      </div>
-
-      <!-- PANEL 2: LOGIN COM CONTA (UTILIZADORES) -->
-      <div id="panelLogin" class="auth-form-panel">
-        <form onsubmit="handleAccountLogin(event)">
-          <div class="form-group">
-            <label class="form-label">Email ou Telemóvel</label>
-            <input type="text" id="loginEmail" class="form-input" placeholder="ex: colega@gnr.pt" autocomplete="username">
-          </div>
-          <div class="form-group">
-            <label class="form-label">Palavra-passe</label>
-            <input type="password" id="loginPassword" class="form-input" placeholder="••••••••" autocomplete="current-password">
-          </div>
-          <button type="submit" class="btn-primary" style="width: 100%; margin-top: 8px;">Iniciar Sessão</button>
-        </form>
-        <div style="font-size: 0.75rem; color: var(--text-muted); margin-top: 12px; text-align: center;">
-          Apenas contas aprovadas pelo Administrador têm acesso ativo.
-        </div>
-      </div>
-
-      <!-- PANEL 3: REGISTO / PEDIR ACESSO -->
-      <div id="panelRegister" class="auth-form-panel">
-        <form id="regFormElement" onsubmit="handleAccountRegister(event)">
-          <div class="form-group">
-            <label class="form-label">Nome Completo</label>
-            <input type="text" id="regName" class="form-input" placeholder="ex: Manuel Silva" required>
-          </div>
-          <div class="form-group">
-            <label class="form-label">Posto / Unidade</label>
-            <input type="text" id="regRole" class="form-input" placeholder="ex: Guarda / Posto Territorial" required>
-          </div>
-          <div class="form-group">
-            <label class="form-label">Email ou Contacto Telefónico</label>
-            <input type="text" id="regContact" class="form-input" placeholder="ex: silva@gnr.pt ou 912345678" required>
-          </div>
-          <div class="form-group">
-            <label class="form-label">Definir Palavra-passe</label>
-            <input type="password" id="regPassword" class="form-input" placeholder="••••••••" required autocomplete="new-password">
-          </div>
-          <button type="submit" class="btn-primary" style="width: 100%; margin-top: 8px;">Submeter Pedido de Acesso</button>
-        </form>
-
-        <!-- LIVE WAITING SCREEN (REAL-TIME AUTO LOGIN ONCE APPROVED) -->
-        <div id="regWaitingScreen" style="display: none; margin-top: 10px; text-align: center; padding: 10px 0;">
-          <div class="radar-spinner"></div>
-          <h3 style="font-size: 1.05rem; font-weight: 800; color: #fff; margin-bottom: 4px;">Pedido Enviado para o Marco!</h3>
-          <p style="font-size: 0.82rem; color: var(--text-secondary); margin-bottom: 12px; line-height: 1.4;">
-            <span class="live-pulse"></span> <strong>Ligação em tempo real ativa:</strong> não precisa de fechar esta página. Assim que o Marco aprovar no PC ou no telemóvel dele, a sua sessão inicia automaticamente!
-          </p>
-          <a id="regWhatsappLink" href="#" target="_blank" class="btn-whatsapp" style="width: 100%; justify-content: center; margin-bottom: 8px;">
-            <span>💬 Notificar Marco por WhatsApp</span>
-          </a>
-          <button type="button" class="btn-secondary" style="width: 100%; font-size: 0.78rem;" onclick="cancelWaitingRegistration()">
-            ✕ Cancelar / Fazer Outro Pedido
+        <div style="margin-top: 18px; text-align: center;">
+          <button type="button" style="background: none; border: none; color: var(--accent-cyan); font-size: 0.85rem; font-weight: 600; cursor: pointer; text-decoration: underline;" onclick="switchGateView('request')">
+            👉 Não tem código de acesso? Pedir Código ao Marco
           </button>
         </div>
       </div>
 
+      <!-- VIEW 2: FORMULÁRIO DE PEDIDO DE CÓDIGO (NOME, POSTO, UNIDADE, WHATSAPP) -->
+      <div id="gateViewRequest" class="auth-form-panel">
+        <div style="font-size: 0.88rem; font-weight: 700; color: #fff; margin-bottom: 12px; text-align: center;">
+          Pedir Código de Acesso
+        </div>
+        <form onsubmit="handleAccessRequest(event)">
+          <div class="form-group">
+            <label class="form-label">Nome Completo</label>
+            <input type="text" id="reqName" class="form-input" placeholder="ex: Manuel Silva" required>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Posto</label>
+            <input type="text" id="reqRole" class="form-input" placeholder="ex: Guarda, Cabo, Sargento" required>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Posto / Unidade onde Trabalha</label>
+            <input type="text" id="reqUnit" class="form-input" placeholder="ex: Posto Territorial do Pinhal Novo" required>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Telemóvel (WhatsApp)</label>
+            <input type="tel" id="reqPhone" class="form-input" placeholder="ex: 912345678" required>
+          </div>
+          <button type="submit" class="btn-primary" style="width: 100%; margin-top: 8px;">Submeter Pedido ao Marco</button>
+        </form>
+        <div style="margin-top: 14px; text-align: center;">
+          <button type="button" class="btn-secondary" style="width: 100%; font-size: 0.82rem;" onclick="switchGateView('login')">
+            ← Voltar ao Ecrã de Entrada
+          </button>
+        </div>
+      </div>
+
+      <!-- VIEW 3: RADAR DE ESPERA EM TEMPO REAL -->
+      <div id="gateViewWaiting" class="auth-form-panel" style="text-align: center; padding: 10px 0;">
+        <div class="radar-spinner"></div>
+        <h3 style="font-size: 1.05rem; font-weight: 800; color: #fff; margin-bottom: 4px;">Pedido Enviado para o Marco!</h3>
+        
+        <div id="waitingCodeBox" style="background: rgba(6, 182, 212, 0.08); border: 1px dashed rgba(6, 182, 212, 0.4); border-radius: var(--radius-sm); padding: 10px; margin: 12px 0;">
+          <div style="font-size: 0.76rem; color: var(--text-secondary); margin-bottom: 4px;">O teu código de acesso atribuído:</div>
+          <span id="waitingCodeBadge" class="code-display-badge">----</span>
+          <div style="font-size: 0.72rem; color: var(--text-muted); margin-top: 4px;">Guarda este código para futuras entradas</div>
+        </div>
+
+        <p style="font-size: 0.82rem; color: var(--text-secondary); margin-bottom: 14px; line-height: 1.4;">
+          <span class="live-pulse"></span> <strong>Ligação em tempo real ativa:</strong> pode enviar a mensagem direta no WhatsApp ou aguardar aqui. Assim que o Marco aprovar no painel dele, o seu telemóvel entra sozinho no Guia!
+        </p>
+        <a id="waitingWhatsappLink" href="#" target="_blank" class="btn-whatsapp" style="width: 100%; justify-content: center; margin-bottom: 10px;">
+          <span>💬 Notificar Marco por WhatsApp</span>
+        </a>
+        <button type="button" class="btn-secondary" style="width: 100%; font-size: 0.78rem;" onclick="cancelWaitingRequest()">
+          ✕ Cancelar / Voltar ao Início
+        </button>
+      </div>
+
       <div class="signature-tag subtle">armadilha</div>
+    </div>
+  </div>
+
+  <!-- MODAL: DEFINIR SENHA DE ADMINISTRADOR (PRIMEIRO ACESSO MARCO) -->
+  <div id="adminSetupModal" class="settings-modal" style="display: none;" onclick="closeAdminSetupOnBackdrop(event)">
+    <div class="settings-content" style="max-width: 380px;">
+      <div class="settings-title">
+        <span>Definir Senha de Admin</span>
+        <button class="icon-btn" onclick="closeAdminSetupModal()">&times;</button>
+      </div>
+      <p style="font-size: 0.82rem; color: var(--text-secondary); margin-bottom: 14px; line-height: 1.4;">
+        Defina a palavra-passe que irá utilizar para entrar como Administrador e gerir todos os acessos.
+      </p>
+      <form onsubmit="handleAdminSetupSubmit(event)">
+        <div class="form-group">
+          <label class="form-label">Nova Senha de Admin</label>
+          <input type="password" id="setupNewAdminPass" class="form-input" placeholder="••••••••" required autofocus>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Confirmar Senha</label>
+          <input type="password" id="setupNewAdminPassConfirm" class="form-input" placeholder="••••••••" required>
+        </div>
+        <button type="submit" class="btn-primary" style="width: 100%; margin-top: 10px;">Guardar e Entrar como Admin</button>
+      </form>
     </div>
   </div>
 
@@ -166,12 +187,13 @@
               <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
             </svg>
           </button>
-          <button class="icon-btn" title="Terminar Sessão" onclick="logoutApp()">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <button class="logout-header-btn" title="Terminar Sessão" onclick="logoutApp()">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path>
               <polyline points="16 17 21 12 16 7"></polyline>
               <line x1="21" y1="12" x2="9" y2="12"></line>
             </svg>
+            <span>Sair</span>
           </button>
         </div>
       </div>
@@ -497,6 +519,16 @@
               <button class="btn-secondary" style="flex: 1;" onclick="playAlertChime()">🔔 Testar Som de Alerta</button>
             </div>
           </div>
+
+          <div class="settings-row" style="margin-top: 24px; padding-top: 16px; border-top: 1px solid var(--border-color);">
+            <label class="settings-label" style="color: #f87171;">Zona de Perigo: Repor Base de Dados</label>
+            <p style="font-size: 0.78rem; color: var(--text-secondary); margin-bottom: 8px;">
+              Elimina todos os utilizadores, pedidos pendentes e códigos guardados, iniciando uma base de dados limpa.
+            </p>
+            <button class="btn-reject" style="width: 100%; padding: 10px;" onclick="adminWipeAllDatabases()">
+              🗑️ Limpar Todas as Bases de Dados (Reset Geral)
+            </button>
+          </div>
         </div>
       </div>
     </div>
@@ -550,6 +582,6 @@
   </div>
 
   <!-- App Script -->
-  <script src="app.js?v=7.0"></script>
+  <script src="app.js?v=8.0"></script>
 </body>
 </html>
