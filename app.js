@@ -1,14 +1,14 @@
 // Guia de Expediente Policial - Core Logic & Real-Time Cloud Engine
 
 // =========================================================================
-// 1. AUTO-UPDATE & ANTI-CACHE ENGINE (v8.4.0)
+// 1. AUTO-UPDATE & ANTI-CACHE ENGINE (v8.5.0)
 // =========================================================================
-const CURRENT_APP_VERSION = 'v8.4.0';
+const CURRENT_APP_VERSION = 'v8.5.0';
 (function autoUpdateCheck() {
   try {
     const storedVersion = localStorage.getItem('opc_app_version');
     if (storedVersion !== CURRENT_APP_VERSION) {
-      console.log('Nova versão v8.4 detetada! A atualizar cache...');
+      console.log('Nova versão v8.5 detetada! A atualizar cache...');
       localStorage.setItem('opc_app_version', CURRENT_APP_VERSION);
       localStorage.removeItem('opc_expedientes_data');
       localStorage.removeItem('opc_artigos_data');
@@ -245,6 +245,19 @@ async function catchUpSyncHistory() {
 }
 
 // Central dispatcher for real-time events
+// Tombstones: ids of deleted users, so replayed history can never bring them back
+function getDeletedIds() {
+  try { return JSON.parse(localStorage.getItem('opc_deleted_ids') || '[]'); } catch { return []; }
+}
+function addDeletedId(id) {
+  if (!id) return;
+  const ids = getDeletedIds();
+  if (!ids.includes(id)) {
+    ids.push(id);
+    localStorage.setItem('opc_deleted_ids', JSON.stringify(ids.slice(-500)));
+  }
+}
+
 function handleIncomingSyncEvent(payload, isBackfill = false) {
   if (!payload || !payload.type) return;
 
@@ -254,6 +267,7 @@ function handleIncomingSyncEvent(payload, isBackfill = false) {
   // 1. Colleague requested access via form
   if (payload.type === 'REQUEST_ACCESS' && payload.user) {
     const incoming = payload.user;
+    if (getDeletedIds().includes(incoming.id)) return; // user was deleted by admin
     const idx = users.findIndex(u => 
       u.id === incoming.id || 
       (incoming.phone && u.phone && u.phone.replace(/\D/g, '') === incoming.phone.replace(/\D/g, '')) ||
@@ -285,6 +299,7 @@ function handleIncomingSyncEvent(payload, isBackfill = false) {
 
   // 2. Marco approved a colleague from PC
   else if (payload.type === 'ACCESS_APPROVED') {
+    if (getDeletedIds().includes(payload.userId)) return;
     const userId = payload.userId;
     const userCode = payload.code;
     const userPhone = payload.phone;
@@ -359,6 +374,37 @@ function handleIncomingSyncEvent(payload, isBackfill = false) {
       if (modal && modal.classList.contains('open')) {
         renderAdminDashboard();
       }
+    }
+  }
+
+  // 3b. User permanently deleted by the admin
+  else if (payload.type === 'USER_DELETED') {
+    const userId = payload.userId;
+    addDeletedId(userId);
+    const remaining = users.filter(u => u.id !== userId);
+    saveUsersLocally(remaining);
+
+    const pendingId = localStorage.getItem('opc_pending_user_id');
+    if (pendingId && pendingId === userId) {
+      localStorage.removeItem('opc_pending_user_id');
+      cancelWaitingRequest();
+      showGateError('O seu pedido de acesso foi eliminado pelo Administrador.');
+    }
+
+    const currentUser = getCurrentUser();
+    if (currentUser && currentUser.role !== 'admin') {
+      const isMatch = (currentUser.id && currentUser.id === userId) ||
+                      (payload.code && currentUser.code === payload.code);
+      if (isMatch) {
+        logoutApp('A sua conta foi eliminada pelo Administrador.');
+        showGateError('A sua conta foi eliminada pelo Administrador.');
+        return;
+      }
+    }
+    if (currentUser && currentUser.role === 'admin') {
+      updateAdminHeaderBadge();
+      const modal = document.getElementById('adminModal');
+      if (modal && modal.classList.contains('open')) renderAdminDashboard();
     }
   }
 
@@ -1140,13 +1186,14 @@ async function adminDeleteUser(id) {
   const name = u ? u.name : 'utilizador';
 
   if (confirm(`Eliminar permanentemente ${name}?`)) {
+    addDeletedId(id);
     const updatedUsers = users.filter(x => x.id !== id);
     saveUsersLocally(updatedUsers);
     renderAdminDashboard();
     updateAdminHeaderBadge();
 
     await broadcastSyncEvent({
-      type: 'ACCESS_REVOKED',
+      type: 'USER_DELETED',
       userId: id,
       code: u?.code,
       phone: u?.phone
