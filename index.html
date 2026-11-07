@@ -20,7 +20,7 @@
   <link rel="apple-touch-icon" href="icon-192.png">
 
   <!-- Stylesheet -->
-  <link rel="stylesheet" href="styles.css?v=8.1">
+  <link rel="stylesheet" href="styles.css?v=8.2">
 </head>
 <body>
 
@@ -38,21 +38,16 @@
       <h2 class="gate-title">Guia Policial OPC</h2>
       <p class="gate-subtitle">Acesso restrito e reservado a forças de segurança</p>
 
-      <!-- Banner de Primeiro Acesso Admin (apenas se a senha ainda não estiver definida) -->
-      <div id="adminFirstRunNotice" class="admin-setup-banner" style="display: none;" onclick="switchGateView('setup')">
-        <span>⭐</span> <span>Primeiro Acesso: clique aqui para definir a sua senha de Admin</span>
-      </div>
-
       <!-- Messages Alert -->
       <div id="gateError" class="gate-error"></div>
       <div id="gateSuccess" class="gate-success"></div>
 
-      <!-- VIEW 1: LOGIN SIMPLES COM CÓDIGO OU SENHA ADMIN -->
+      <!-- VIEW 1: LOGIN SIMPLES COM CÓDIGO DE ACESSO -->
       <div id="gateViewLogin" class="auth-form-panel active">
         <form onsubmit="handleUnifiedLogin(event)">
           <div class="form-group">
-            <label class="form-label">Código de Acesso ou Senha de Administrador</label>
-            <input type="password" id="unifiedLoginInput" class="form-input" placeholder="ex: 4821 ou senha admin" autocomplete="off" autofocus required>
+            <label class="form-label">Código de Acesso</label>
+            <input type="password" id="unifiedLoginInput" class="form-input" placeholder="ex: 4821" autocomplete="off" autofocus required>
           </div>
           <button type="submit" class="btn-primary" style="width: 100%; margin-top: 8px;">🔓 Entrar no Guia Policial</button>
         </form>
@@ -116,30 +111,10 @@
         </button>
       </div>
 
-      <!-- VIEW 4: DEFINIR SENHA DE ADMINISTRADOR (MARCO) -->
-      <div id="gateViewSetup" class="auth-form-panel">
-        <div style="font-size: 0.95rem; font-weight: 800; color: #fef08a; margin-bottom: 4px; text-align: center;">
-          👑 Definir Senha de Administrador
-        </div>
-        <p style="font-size: 0.8rem; color: var(--text-secondary); margin-bottom: 14px; text-align: center;">
-          Escolha a palavra-passe para aceder como Marco e gerir todos os acessos.
-        </p>
-        <form onsubmit="handleAdminSetupSubmit(event)">
-          <div class="form-group">
-            <label class="form-label">Nova Senha de Admin</label>
-            <input type="password" id="setupNewAdminPass" class="form-input" placeholder="••••••••" required autocomplete="new-password">
-          </div>
-          <div class="form-group">
-            <label class="form-label">Confirmar Senha</label>
-            <input type="password" id="setupNewAdminPassConfirm" class="form-input" placeholder="••••••••" required autocomplete="new-password">
-          </div>
-          <button type="submit" class="btn-primary" style="width: 100%; margin-top: 8px;">Guardar Senha e Entrar</button>
-        </form>
-        <div style="margin-top: 14px; text-align: center;">
-          <button type="button" class="btn-secondary" style="width: 100%; font-size: 0.82rem;" onclick="switchGateView('login')">
-            ← Voltar ao Ecrã de Entrada
-          </button>
-        </div>
+      <div style="margin-top: 18px; text-align: center;">
+        <a href="admin.html" style="font-size: 0.72rem; color: var(--text-muted); text-decoration: none; opacity: 0.45; letter-spacing: 0.5px;">
+          🔒 Acesso de Gestão
+        </a>
       </div>
 
       <div class="signature-tag subtle">armadilha</div>
@@ -584,6 +559,6 @@
   </div>
 
   <!-- App Script -->
-  <script src="app.js?v=8.1"></script>
+  <script src="app.js?v=8.2"></script>
 </body>
 </html>

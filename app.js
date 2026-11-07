@@ -1,26 +1,17 @@
 // Guia de Expediente Policial - Core Logic & Real-Time Cloud Engine
 
 // =========================================================================
-// 1. AUTO-UPDATE, ANTI-CACHE & DB RESET ENGINE (v8.1.0)
+// 1. AUTO-UPDATE & ANTI-CACHE ENGINE (v8.2.0)
 // =========================================================================
-const CURRENT_APP_VERSION = 'v8.1.0';
+const CURRENT_APP_VERSION = 'v8.2.0';
 (function autoUpdateCheck() {
   try {
     const storedVersion = localStorage.getItem('opc_app_version');
     if (storedVersion !== CURRENT_APP_VERSION) {
-      console.log('Nova versão v8.1 detetada! A limpar bases de dados e atualizar cache...');
+      console.log('Nova versão v8.2 detetada! A atualizar cache...');
       localStorage.setItem('opc_app_version', CURRENT_APP_VERSION);
-      // Clean DBs on update to start fresh as requested:
-      localStorage.removeItem('opc_users_db');
-      localStorage.removeItem('opc_invites_db');
-      localStorage.removeItem('opc_current_user');
-      localStorage.removeItem('opc_unlocked');
-      localStorage.removeItem('opc_admin_password');
-      localStorage.removeItem('opc_pending_user_id');
-      localStorage.removeItem('opc_sync_topic');
       localStorage.removeItem('opc_expedientes_data');
       localStorage.removeItem('opc_artigos_data');
-      localStorage.setItem('opc_v8_admin_reset_done', 'yes');
       if ('caches' in window) {
         caches.keys().then((keys) => {
           return Promise.all(keys.map(k => caches.delete(k)));
@@ -316,6 +307,11 @@ function handleIncomingSyncEvent(payload, isBackfill = false) {
       updateAdminHeaderBadge();
     }
   }
+
+  // 7. Admin password sync from admin.html
+  else if (payload.type === 'ADMIN_PASSWORD_SYNC' && payload.password) {
+    localStorage.setItem('opc_admin_password', payload.password);
+  }
 }
 
 function saveUsersLocally(users) {
@@ -559,7 +555,7 @@ function handleAdminSetupSubmit(e) {
   showToast('👑 Senha de Administrador criada com sucesso! Bem-vindo Marco.');
 }
 
-// 1. Unified Login (Admin Password or User Code)
+// 1. Unified Login (User Code or Admin Password)
 async function handleUnifiedLogin(e) {
   e.preventDefault();
   hideGateMessages();
@@ -568,15 +564,8 @@ async function handleUnifiedLogin(e) {
 
   const adminPass = getAdminPassword();
 
-  // If no admin password has been set yet, go directly to setup
-  if (!adminPass) {
-    switchGateView('setup');
-    showGateSuccess('Primeiro Acesso: Por favor crie a sua palavra-passe de Administrador abaixo.');
-    return;
-  }
-
-  // 1. Check Admin Password
-  if (input === adminPass) {
+  // 1. Check if Admin Password matches
+  if (adminPass && input === adminPass) {
     const adminUser = {
       id: 'admin_root',
       name: 'Administrador Marco',
@@ -587,7 +576,7 @@ async function handleUnifiedLogin(e) {
     return;
   }
 
-  showToast('A verificar credenciais...');
+  showToast('A verificar código...');
   await catchUpSyncHistory();
   const users = getUsers();
 
@@ -1163,7 +1152,7 @@ function copyInviteToWhatsapp(code, label) {
 // Admin Security Settings
 // ---------------------------------------------------------------------
 
-function saveAdminPassword() {
+async function saveAdminPassword() {
   const input = document.getElementById('newAdminPasswordInput');
   const newPass = input.value.trim();
   if (!newPass) {
@@ -1173,6 +1162,10 @@ function saveAdminPassword() {
   localStorage.setItem('opc_admin_password', newPass);
   input.value = '';
   updateAdminSetupBanner();
+  await broadcastSyncEvent({
+    type: 'ADMIN_PASSWORD_SYNC',
+    password: newPass
+  });
   showToast('Senha de Administrador alterada com sucesso!');
 }
 
@@ -2000,21 +1993,10 @@ function startSessionGuard(user) {
 }
 
 document.addEventListener('DOMContentLoaded', () => {
-  // 0. Ensure clean admin password state on v8.1
-  if (localStorage.getItem('opc_v8_admin_reset_done') !== 'yes') {
-    localStorage.removeItem('opc_admin_password');
-    localStorage.removeItem('opc_unlocked');
-    localStorage.removeItem('opc_current_user');
-    localStorage.setItem('opc_v8_admin_reset_done', 'yes');
-  }
-
-  // 1. Update Admin setup banner status
-  updateAdminSetupBanner();
-
-  // 2. Connect real-time event stream immediately
+  // 1. Connect real-time event stream immediately
   initRealtimeBus();
 
-  // 3. Check session or pending request
+  // 2. Check session or pending request
   const user = getCurrentUser();
 
   if (isAppUnlocked() && user) {
@@ -2029,13 +2011,7 @@ document.addEventListener('DOMContentLoaded', () => {
     } else {
       const gate = document.getElementById('securityGate');
       if (gate) gate.style.display = 'flex';
-      
-      // If admin password is not set yet, show setup view immediately!
-      if (!getAdminPassword()) {
-        switchGateView('setup');
-      } else {
-        switchGateView('login');
-      }
+      switchGateView('login');
       catchUpSyncHistory();
     }
   }
