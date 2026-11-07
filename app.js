@@ -1,9 +1,9 @@
 // Guia de Expediente Policial - Core Logic & Real-Time Cloud Engine
 
 // =========================================================================
-// 1. AUTO-UPDATE & ANTI-CACHE ENGINE (v6.0.0)
+// 1. AUTO-UPDATE & ANTI-CACHE ENGINE (v7.0.0)
 // =========================================================================
-const CURRENT_APP_VERSION = 'v6.0.0';
+const CURRENT_APP_VERSION = 'v7.0.0';
 (function autoUpdateCheck() {
   try {
     const storedVersion = localStorage.getItem('opc_app_version');
@@ -68,75 +68,232 @@ let currentArtigoSearch = '';
 const expandedArticles = new Set();
 
 // =========================================================================
-// 2. REAL-TIME CLOUD DATABASE (TELEFONE ↔ PC)
+// 2. REAL-TIME CLOUD EVENT BUS (NTFY.SH TELEFONE ↔ PC)
 // =========================================================================
-const DEFAULT_CLOUD_DB_URL = 'https://api.restful-api.dev/objects/ff808181a09d98f701a1b3a44d815846';
+const DEFAULT_SYNC_TOPIC = 'opc_guia_marcoalves_pinhalnovo_v6';
+const NTFY_BASE_URL = 'https://ntfy.sh';
 
-function getCloudDbUrl() {
-  return localStorage.getItem('opc_cloud_sync_url') || DEFAULT_CLOUD_DB_URL;
+function getSyncTopic() {
+  return localStorage.getItem('opc_sync_topic') || DEFAULT_SYNC_TOPIC;
 }
 
-let cloudFetchPromise = null;
-let adminPollInterval = null;
-let userApprovalPollInterval = null;
+let syncEventSource = null;
 let lastKnownPendingCount = 0;
 
-async function fetchFromCloudDB() {
-  if (cloudFetchPromise) return cloudFetchPromise;
-
-  cloudFetchPromise = (async () => {
-    const url = getCloudDbUrl();
-    try {
-      const res = await fetch(url, { cache: 'no-store' });
-      if (!res.ok) throw new Error('HTTP ' + res.status);
-      const doc = await res.json();
-      if (doc && doc.data) {
-        if (Array.isArray(doc.data.users)) {
-          localStorage.setItem('opc_users_db', JSON.stringify(doc.data.users));
-        }
-        if (Array.isArray(doc.data.invites)) {
-          localStorage.setItem('opc_invites_db', JSON.stringify(doc.data.invites));
-        }
-        return doc.data;
-      }
-    } catch (err) {
-      console.warn('Sync cloud offline ou indisponível:', err);
-    } finally {
-      cloudFetchPromise = null;
-    }
-    return null;
-  })();
-
-  return cloudFetchPromise;
+// Broadcast an event to all connected devices in real time (< 0.3s latency)
+async function broadcastSyncEvent(payload) {
+  const topic = getSyncTopic();
+  try {
+    const res = await fetch(`${NTFY_BASE_URL}/${topic}`, {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    });
+    return res.ok;
+  } catch (err) {
+    console.warn('Erro ao transmitir evento de sincronização:', err);
+    return false;
+  }
 }
 
-async function pushToCloudDB(updateFn) {
-  const url = getCloudDbUrl();
+// Connect to real-time Server-Sent Events stream
+function initRealtimeBus() {
+  if (syncEventSource) return;
+  const topic = getSyncTopic();
+
   try {
-    const res = await fetch(url, { cache: 'no-store' });
-    if (!res.ok) throw new Error('Falha ao obter estado cloud: ' + res.status);
-    const doc = await res.json();
-    if (!doc.data) doc.data = { users: [], invites: [] };
+    syncEventSource = new EventSource(`${NTFY_BASE_URL}/${topic}/sse`);
 
-    // Apply updates via callback
-    doc.data = updateFn(doc.data);
-    doc.data.lastUpdated = new Date().toISOString();
+    syncEventSource.onmessage = (e) => {
+      try {
+        const ntfyMsg = JSON.parse(e.data);
+        if (!ntfyMsg || !ntfyMsg.message) return;
+        const payload = JSON.parse(ntfyMsg.message);
+        handleIncomingSyncEvent(payload, false);
+      } catch (err) {
+        // Heartbeat or parse error
+      }
+    };
 
-    const putRes = await fetch(url, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: doc.name || 'guia_policial_cloud_db', data: doc.data })
-    });
-
-    if (putRes.ok) {
-      if (Array.isArray(doc.data.users)) localStorage.setItem('opc_users_db', JSON.stringify(doc.data.users));
-      if (Array.isArray(doc.data.invites)) localStorage.setItem('opc_invites_db', JSON.stringify(doc.data.invites));
-      return true;
-    }
+    syncEventSource.onerror = () => {
+      // Browser automatically retries EventSource reconnection
+    };
   } catch (err) {
-    console.warn('Erro ao enviar para a nuvem:', err);
+    console.warn('EventSource indisponível:', err);
   }
-  return false;
+}
+
+// Recover recent events from last 24h cache (requests made while PC was closed)
+async function catchUpSyncHistory() {
+  const topic = getSyncTopic();
+  try {
+    const res = await fetch(`${NTFY_BASE_URL}/${topic}/json?poll=1&since=24h`, { cache: 'no-cache' });
+    if (!res.ok) return;
+    const text = await res.text();
+    const lines = text.trim().split('\n');
+    for (const line of lines) {
+      if (!line) continue;
+      try {
+        const item = JSON.parse(line);
+        if (item && item.message) {
+          const payload = JSON.parse(item.message);
+          handleIncomingSyncEvent(payload, true);
+        }
+      } catch {}
+    }
+    updateAdminHeaderBadge();
+  } catch (err) {
+    console.warn('Falha no histórico de sincronização:', err);
+  }
+}
+
+// Central dispatcher for real-time events
+function handleIncomingSyncEvent(payload, isBackfill = false) {
+  if (!payload || !payload.type) return;
+
+  const users = getUsers();
+  const invites = getInviteCodes();
+
+  // 1. Colleague requested access from mobile
+  if (payload.type === 'REQUEST_ACCESS' && payload.user) {
+    const incoming = payload.user;
+    const idx = users.findIndex(u => u.id === incoming.id || (u.contact && u.contact.toLowerCase() === incoming.contact.toLowerCase()));
+    
+    if (idx >= 0) {
+      if (users[idx].status !== 'approved') {
+        users[idx] = { ...users[idx], ...incoming };
+      }
+    } else {
+      users.unshift(incoming);
+    }
+    saveUsersLocally(users);
+
+    const currentUser = getCurrentUser();
+    if (currentUser && currentUser.role === 'admin') {
+      updateAdminHeaderBadge();
+      if (!isBackfill) {
+        playAlertChime();
+        showToast(`🚨 Novo pedido: ${incoming.name} (${incoming.role})!`);
+        const modal = document.getElementById('adminModal');
+        if (modal && modal.classList.contains('open')) {
+          renderAdminDashboard();
+        }
+      }
+    }
+  }
+
+  // 2. Marco approved a colleague from PC
+  else if (payload.type === 'ACCESS_APPROVED') {
+    const userId = payload.userId;
+    const target = users.find(u => u.id === userId);
+    if (target) {
+      target.status = 'approved';
+      saveUsersLocally(users);
+    }
+
+    // Check if this device is waiting for this approval!
+    const pendingId = localStorage.getItem('opc_pending_user_id');
+    if (pendingId === userId || (target && getCurrentUser()?.id === userId)) {
+      localStorage.removeItem('opc_pending_user_id');
+      const approvedUser = payload.user || target || { id: userId, name: payload.userName || 'Colega', role: 'OPC', status: 'approved' };
+      
+      showGateSuccess('✓ Acesso APROVADO pelo Marco! A entrar no sistema...');
+      showToast('🎉 Bem-vindo ao Guia Policial!');
+      setTimeout(() => {
+        setCurrentUser(approvedUser);
+      }, 700);
+    }
+
+    const currentUser = getCurrentUser();
+    if (currentUser && currentUser.role === 'admin') {
+      updateAdminHeaderBadge();
+      const modal = document.getElementById('adminModal');
+      if (modal && modal.classList.contains('open')) {
+        renderAdminDashboard();
+      }
+    }
+  }
+
+  // 3. Marco rejected or revoked access
+  else if (payload.type === 'ACCESS_REVOKED') {
+    const userId = payload.userId;
+    const target = users.find(u => u.id === userId);
+    if (target) {
+      target.status = 'rejected';
+      saveUsersLocally(users);
+    }
+
+    const pendingId = localStorage.getItem('opc_pending_user_id');
+    if (pendingId === userId) {
+      localStorage.removeItem('opc_pending_user_id');
+      cancelWaitingRegistration();
+      showGateError('O seu pedido foi recusado pelo Administrador.');
+    }
+
+    const currentUser = getCurrentUser();
+    if (currentUser && currentUser.id === userId && currentUser.role !== 'admin') {
+      logoutApp();
+      showGateError('A sua sessão foi encerrada pelo Administrador.');
+    }
+
+    if (currentUser && currentUser.role === 'admin') {
+      updateAdminHeaderBadge();
+      const modal = document.getElementById('adminModal');
+      if (modal && modal.classList.contains('open')) {
+        renderAdminDashboard();
+      }
+    }
+  }
+
+  // 4. Invite generated by Marco
+  else if (payload.type === 'INVITE_CREATED' && payload.invite) {
+    const idx = invites.findIndex(i => i.code === payload.invite.code);
+    if (idx >= 0) {
+      invites[idx] = payload.invite;
+    } else {
+      invites.unshift(payload.invite);
+    }
+    saveInvitesLocally(invites);
+  }
+
+  // 5. Invite toggled/revoked
+  else if (payload.type === 'INVITE_TOGGLED') {
+    const inv = invites.find(i => i.code === payload.code);
+    if (inv) {
+      inv.active = payload.active;
+      saveInvitesLocally(invites);
+    }
+    const currentUser = getCurrentUser();
+    if (currentUser && currentUser.inviteCode === payload.code && !payload.active) {
+      logoutApp();
+      showGateError('O código de convite utilizado foi revogado.');
+    }
+  }
+}
+
+function saveUsersLocally(users) {
+  localStorage.setItem('opc_users_db', JSON.stringify(users));
+}
+
+function saveInvitesLocally(invites) {
+  localStorage.setItem('opc_invites_db', JSON.stringify(invites));
+}
+
+function updateAdminHeaderBadge() {
+  const users = getUsers();
+  const pending = users.filter(u => u.status === 'pending');
+  const headerBadge = document.getElementById('headerPendingBadge');
+  const adminBtn = document.getElementById('adminPanelBtn');
+
+  if (pending.length > 0) {
+    if (headerBadge) {
+      headerBadge.textContent = pending.length;
+      headerBadge.style.display = 'inline-block';
+    }
+    if (adminBtn) adminBtn.classList.add('has-pending-alert');
+  } else {
+    if (headerBadge) headerBadge.style.display = 'none';
+    if (adminBtn) adminBtn.classList.remove('has-pending-alert');
+  }
 }
 
 // =========================================================================
@@ -285,7 +442,7 @@ async function handleDirectSubmit(e) {
   }
 
   // Check Cloud Invites
-  await fetchFromCloudDB();
+  await catchUpSyncHistory();
   const invites = getInviteCodes();
   const matchedInvite = invites.find(inv => inv.code.toUpperCase() === input.toUpperCase() && inv.active);
 
@@ -317,7 +474,7 @@ async function handleAccountLogin(e) {
   }
 
   showToast('A verificar credenciais...');
-  await fetchFromCloudDB();
+  await catchUpSyncHistory();
   const users = getUsers();
   const user = users.find(u => (u.contact && u.contact.toLowerCase() === contact) || (u.email && u.email.toLowerCase() === contact));
 
@@ -333,7 +490,6 @@ async function handleAccountLogin(e) {
 
   if (user.status === 'pending') {
     showGateError('A sua conta aguarda aprovação pelo Administrador Marco. Foi colocada na lista de espera.');
-    // Start active waiting screen
     startUserWaitingScreen(user);
     return;
   }
@@ -349,7 +505,7 @@ async function handleAccountLogin(e) {
   }
 }
 
-// 3. User Registration (Live Real-Time to Cloud)
+// 3. User Registration (Live Real-Time to Cloud Bus)
 async function handleAccountRegister(e) {
   e.preventDefault();
   const name = document.getElementById('regName').value.trim();
@@ -362,8 +518,8 @@ async function handleAccountRegister(e) {
     return;
   }
 
-  showToast('A enviar pedido para a nuvem...');
-  await fetchFromCloudDB();
+  showToast('A enviar pedido em tempo real...');
+  await catchUpSyncHistory();
   const users = getUsers();
   const exists = users.find(u => (u.contact && u.contact.toLowerCase() === contact) || (u.email && u.email.toLowerCase() === contact));
 
@@ -372,8 +528,9 @@ async function handleAccountRegister(e) {
       showGateSuccess('Esta conta já se encontra APROVADA! Vá à aba "Entrar com Conta".');
       return;
     } else {
-      showGateError('Este pedido já foi enviado e aguarda aprovação de Marco.');
+      showGateSuccess('Este pedido já foi enviado e aguarda aprovação de Marco.');
       startUserWaitingScreen(exists);
+      broadcastSyncEvent({ type: 'REQUEST_ACCESS', user: exists });
       return;
     }
   }
@@ -389,21 +546,14 @@ async function handleAccountRegister(e) {
     createdAt: new Date().toISOString()
   };
 
-  // Push to Cloud DB in real time!
-  const pushed = await pushToCloudDB((data) => {
-    if (!data.users) data.users = [];
-    const idx = data.users.findIndex(u => (u.contact && u.contact.toLowerCase() === contact) || (u.email && u.email.toLowerCase() === contact));
-    if (idx >= 0) {
-      data.users[idx] = newUser;
-    } else {
-      data.users.unshift(newUser);
-    }
-    return data;
-  });
+  users.unshift(newUser);
+  saveUsersLocally(users);
 
-  if (!pushed) {
-    showGateError('Aviso: ligação lenta. A tentar manter pedido local e na nuvem...');
-  }
+  // Broadcast instantly to Marco's PC (< 0.3s latency via ntfy SSE)
+  await broadcastSyncEvent({
+    type: 'REQUEST_ACCESS',
+    user: newUser
+  });
 
   // Start real-time waiting screen on user's phone!
   startUserWaitingScreen(newUser);
@@ -424,30 +574,14 @@ function startUserWaitingScreen(user) {
   const msg = encodeURIComponent(`Olá Marco! Criei conta no Guia Policial (OPC):\nNome: ${user.name}\nPosto: ${user.role}\nContacto: ${user.contact}\nPodes aprovar o meu acesso no teu painel?`);
   waLink.href = `https://wa.me/?text=${msg}`;
 
-  showGateSuccess('Pedido enviado! Aguarde aprovação nesta janela...');
+  showGateSuccess('Pedido enviado! A aguardar aprovação em tempo real...');
 
-  // Active polling every 2.5 seconds: enters automatically once approved!
+  // Ensure real-time connection is alive
+  initRealtimeBus();
+
+  // Periodic catch-up backup check every 10s
   if (userApprovalPollInterval) clearInterval(userApprovalPollInterval);
-  userApprovalPollInterval = setInterval(async () => {
-    const cloudData = await fetchFromCloudDB();
-    if (cloudData && Array.isArray(cloudData.users)) {
-      const liveUser = cloudData.users.find(u => u.id === user.id);
-      if (liveUser && liveUser.status === 'approved') {
-        clearInterval(userApprovalPollInterval);
-        localStorage.removeItem('opc_pending_user_id');
-        showGateSuccess('✓ Acesso APROVADO pelo Marco! A entrar no sistema...');
-        showToast('🎉 Acesso Concedido! Bem-vindo.');
-        setTimeout(() => {
-          setCurrentUser(liveUser);
-        }, 800);
-      } else if (liveUser && liveUser.status === 'rejected') {
-        clearInterval(userApprovalPollInterval);
-        localStorage.removeItem('opc_pending_user_id');
-        showGateError('O seu pedido foi recusado pelo Administrador.');
-        cancelWaitingRegistration();
-      }
-    }
-  }, 2500);
+  userApprovalPollInterval = setInterval(catchUpSyncHistory, 10000);
 }
 
 function cancelWaitingRegistration() {
@@ -463,58 +597,19 @@ function cancelWaitingRegistration() {
 // =========================================================================
 
 function startAdminRealTimePolling() {
+  initRealtimeBus();
+  catchUpSyncHistory();
+
   if (adminPollInterval) clearInterval(adminPollInterval);
-  
-  // Initial check
-  checkAdminUpdates();
-
-  // Poll cloud DB every 3 seconds for new requests from phones!
-  adminPollInterval = setInterval(checkAdminUpdates, 3000);
-}
-
-async function checkAdminUpdates() {
-  const user = getCurrentUser();
-  if (!user || user.role !== 'admin') return;
-
-  const data = await fetchFromCloudDB();
-  if (data && Array.isArray(data.users)) {
-    const pending = data.users.filter(u => u.status === 'pending');
-    
-    // Header Notification Badge & Pulsing alert ring
-    const headerBadge = document.getElementById('headerPendingBadge');
-    const adminBtn = document.getElementById('adminPanelBtn');
-
-    if (pending.length > 0) {
-      if (headerBadge) {
-        headerBadge.textContent = pending.length;
-        headerBadge.style.display = 'inline-block';
-      }
-      if (adminBtn) adminBtn.classList.add('has-pending-alert');
-    } else {
-      if (headerBadge) headerBadge.style.display = 'none';
-      if (adminBtn) adminBtn.classList.remove('has-pending-alert');
-    }
-
-    // If new request arrived, sound chime + toast alert!
-    if (pending.length > lastKnownPendingCount) {
-      const newest = pending[0];
-      playAlertChime();
-      showToast(`🚨 Novo pedido: ${newest.name} (${newest.role})!`);
-    }
-    lastKnownPendingCount = pending.length;
-
-    // If admin modal is currently open, re-render immediately!
-    const modal = document.getElementById('adminModal');
-    if (modal && modal.classList.contains('open')) {
-      renderAdminDashboard();
-    }
-  }
+  // Backup poll every 15 seconds to ensure no packet drops
+  adminPollInterval = setInterval(catchUpSyncHistory, 15000);
 }
 
 async function manualAdminRefresh() {
-  showToast('A verificar atualizações na nuvem...');
-  await fetchFromCloudDB();
+  showToast('A verificar atualizações em direto...');
+  await catchUpSyncHistory();
   renderAdminDashboard();
+  updateAdminHeaderBadge();
   showToast('Sincronização concluída!');
 }
 
@@ -523,12 +618,12 @@ function openAdminModal() {
   if (!modal) return;
   modal.classList.add('open');
 
-  const cloudInput = document.getElementById('adminCloudSyncUrl');
-  if (cloudInput) {
-    cloudInput.value = getCloudDbUrl();
+  const topicInput = document.getElementById('adminCloudSyncUrl');
+  if (topicInput) {
+    topicInput.value = `${NTFY_BASE_URL}/${getSyncTopic()}`;
   }
 
-  fetchFromCloudDB().then(() => renderAdminDashboard());
+  catchUpSyncHistory().then(() => renderAdminDashboard());
 }
 
 function closeAdminModal() {
@@ -630,46 +725,75 @@ function renderAdminDashboard() {
 }
 
 async function adminApproveUser(id) {
-  showToast('A aprovar conta na nuvem...');
-  const success = await pushToCloudDB((data) => {
-    const u = (data.users || []).find(x => x.id === id);
-    if (u) u.status = 'approved';
-    return data;
+  const users = getUsers();
+  const u = users.find(x => x.id === id);
+  if (!u) return;
+
+  u.status = 'approved';
+  saveUsersLocally(users);
+  renderAdminDashboard();
+  updateAdminHeaderBadge();
+
+  // Instant broadcast to colleague's phone via ntfy SSE!
+  await broadcastSyncEvent({
+    type: 'ACCESS_APPROVED',
+    userId: id,
+    userName: u.name,
+    user: u
   });
 
-  if (success) {
-    renderAdminDashboard();
-    showToast('✓ Utilizador APROVADO! O telemóvel dele entrará automaticamente.');
-  }
+  showToast(`✓ ${u.name} APROVADO! O telemóvel dele entrará automaticamente.`);
 }
 
 async function adminRejectUser(id) {
-  await pushToCloudDB((data) => {
-    const u = (data.users || []).find(x => x.id === id);
-    if (u) u.status = 'rejected';
-    return data;
-  });
+  const users = getUsers();
+  const u = users.find(x => x.id === id);
+  if (!u) return;
+
+  u.status = 'rejected';
+  saveUsersLocally(users);
   renderAdminDashboard();
+  updateAdminHeaderBadge();
+
+  await broadcastSyncEvent({
+    type: 'ACCESS_REVOKED',
+    userId: id
+  });
+
   showToast('Pedido recusado.');
 }
 
 async function adminRevokeUser(id) {
-  await pushToCloudDB((data) => {
-    const u = (data.users || []).find(x => x.id === id);
-    if (u) u.status = 'rejected';
-    return data;
-  });
+  const users = getUsers();
+  const u = users.find(x => x.id === id);
+  if (!u) return;
+
+  u.status = 'rejected';
+  saveUsersLocally(users);
   renderAdminDashboard();
+  updateAdminHeaderBadge();
+
+  await broadcastSyncEvent({
+    type: 'ACCESS_REVOKED',
+    userId: id
+  });
+
   showToast('Acesso bloqueado.');
 }
 
 async function adminDeleteUser(id) {
   if (confirm('Eliminar permanentemente este utilizador?')) {
-    await pushToCloudDB((data) => {
-      data.users = (data.users || []).filter(x => x.id !== id);
-      return data;
-    });
+    let users = getUsers();
+    users = users.filter(x => x.id !== id);
+    saveUsersLocally(users);
     renderAdminDashboard();
+    updateAdminHeaderBadge();
+
+    await broadcastSyncEvent({
+      type: 'ACCESS_REVOKED',
+      userId: id
+    });
+
     showToast('Utilizador eliminado.');
   }
 }
@@ -724,15 +848,19 @@ async function createInviteCode() {
   const randomStr = Math.floor(1000 + Math.random() * 9000);
   const code = `OPC-${randomStr}`;
 
-  await pushToCloudDB((data) => {
-    if (!data.invites) data.invites = [];
-    data.invites.unshift({
-      code,
-      label,
-      active: true,
-      createdAt: new Date().toISOString()
-    });
-    return data;
+  const invites = getInviteCodes();
+  const newInvite = {
+    code,
+    label,
+    active: true,
+    createdAt: new Date().toISOString()
+  };
+  invites.unshift(newInvite);
+  saveInvitesLocally(invites);
+
+  await broadcastSyncEvent({
+    type: 'INVITE_CREATED',
+    invite: newInvite
   });
 
   labelInput.value = '';
@@ -741,13 +869,19 @@ async function createInviteCode() {
 }
 
 async function toggleInviteActive(code) {
-  await pushToCloudDB((data) => {
-    const inv = (data.invites || []).find(i => i.code === code);
-    if (inv) inv.active = !inv.active;
-    return data;
-  });
-  renderAdminInvites();
-  showToast(`Código ${code} atualizado na nuvem.`);
+  const invites = getInviteCodes();
+  const inv = invites.find(i => i.code === code);
+  if (inv) {
+    inv.active = !inv.active;
+    saveInvitesLocally(invites);
+    await broadcastSyncEvent({
+      type: 'INVITE_TOGGLED',
+      code: inv.code,
+      active: inv.active
+    });
+    renderAdminInvites();
+    showToast(`Código ${code} atualizado.`);
+  }
 }
 
 function copyInviteToWhatsapp(code, label) {
@@ -780,11 +914,8 @@ function saveAdminPassword() {
 }
 
 function saveCloudSyncUrl() {
-  const input = document.getElementById('adminCloudSyncUrl');
-  const url = input.value.trim();
-  localStorage.setItem('opc_cloud_sync_url', url);
-  showToast('URL de nuvem atualizado!');
-  fetchFromCloudDB().then(() => renderAdminDashboard());
+  showToast('Canal em tempo real ativo: ' + getSyncTopic());
+  catchUpSyncHistory().then(() => renderAdminDashboard());
 }
 
 // =========================================================================
@@ -830,7 +961,7 @@ async function loadAllData() {
 
   // Load and sync
   await syncData(false);
-  await fetchFromCloudDB();
+  await catchUpSyncHistory();
 }
 
 async function syncData(manual = false) {
@@ -1506,7 +1637,7 @@ function showToast(msg) {
 }
 
 // =========================================================================
-// 12. PWA SERVICE WORKER AUTO-UPDATE (v6.0)
+// 12. PWA SERVICE WORKER AUTO-UPDATE (v7.0)
 // =========================================================================
 
 if ('serviceWorker' in navigator) {
@@ -1520,7 +1651,7 @@ if ('serviceWorker' in navigator) {
   });
 
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('sw.js?v=6.0')
+    navigator.serviceWorker.register('sw.js?v=7.0')
       .then(reg => {
         reg.update();
         reg.addEventListener('updatefound', () => {
@@ -1548,57 +1679,64 @@ async function checkPendingApprovalOnLoad(pendingId) {
   document.getElementById('regWaitingScreen').style.display = 'block';
   showGateSuccess('A verificar aprovação com o Administrador Marco...');
 
-  const cloudData = await fetchFromCloudDB();
-  if (cloudData && Array.isArray(cloudData.users)) {
-    const liveUser = cloudData.users.find(u => u.id === pendingId);
-    if (liveUser) {
-      if (liveUser.status === 'approved') {
-        localStorage.removeItem('opc_pending_user_id');
-        showGateSuccess('✓ Acesso aprovado pelo Marco! A entrar...');
-        showToast('🎉 Bem-vindo, ' + liveUser.name + '!');
-        setTimeout(() => {
-          setCurrentUser(liveUser);
-        }, 800);
-        return;
-      } else if (liveUser.status === 'rejected') {
-        localStorage.removeItem('opc_pending_user_id');
-        showGateError('O seu pedido de acesso foi recusado pelo Administrador.');
-        cancelWaitingRegistration();
-        return;
-      } else {
-        // Still pending: resume live radar polling
-        startUserWaitingScreen(liveUser);
-        return;
-      }
+  initRealtimeBus();
+  await catchUpSyncHistory();
+
+  const users = getUsers();
+  const liveUser = users.find(u => u.id === pendingId);
+
+  if (liveUser) {
+    if (liveUser.status === 'approved') {
+      localStorage.removeItem('opc_pending_user_id');
+      showGateSuccess('✓ Acesso aprovado pelo Marco! A entrar...');
+      showToast('🎉 Bem-vindo, ' + liveUser.name + '!');
+      setTimeout(() => {
+        setCurrentUser(liveUser);
+      }, 700);
+      return;
+    } else if (liveUser.status === 'rejected') {
+      localStorage.removeItem('opc_pending_user_id');
+      showGateError('O seu pedido de acesso foi recusado pelo Administrador.');
+      cancelWaitingRegistration();
+      return;
+    } else {
+      // Still pending
+      startUserWaitingScreen(liveUser);
+      return;
     }
   }
-  // Not found in cloud (deleted), restore standard form
-  cancelWaitingRegistration();
+
+  startUserWaitingScreen({ id: pendingId, name: 'Colega', role: 'OPC' });
 }
 
 function startSessionGuard(user) {
-  // Check periodically if current non-admin session is still approved
+  // Periodically check if session remains valid
   setInterval(async () => {
-    const cloudData = await fetchFromCloudDB();
-    if (cloudData) {
-      if (user.inviteCode) {
-        const inv = (cloudData.invites || []).find(i => i.code === user.inviteCode);
-        if (inv && !inv.active) {
-          logoutApp();
-          showGateError('O seu código de convite foi revogado.');
-        }
-      } else if (user.id && user.role !== 'admin') {
-        const liveUser = (cloudData.users || []).find(u => u.id === user.id);
-        if (!liveUser || liveUser.status !== 'approved') {
-          logoutApp();
-          showGateError('A sua sessão foi encerrada ou revogada pelo Administrador.');
-        }
+    await catchUpSyncHistory();
+    const users = getUsers();
+    const invites = getInviteCodes();
+
+    if (user.inviteCode) {
+      const inv = invites.find(i => i.code === user.inviteCode);
+      if (inv && !inv.active) {
+        logoutApp();
+        showGateError('O seu código de convite foi revogado.');
+      }
+    } else if (user.id && user.role !== 'admin') {
+      const liveUser = users.find(u => u.id === user.id);
+      if (!liveUser || liveUser.status !== 'approved') {
+        logoutApp();
+        showGateError('A sua sessão foi encerrada pelo Administrador.');
       }
     }
-  }, 35000);
+  }, 45000);
 }
 
 document.addEventListener('DOMContentLoaded', () => {
+  // 1. Connect real-time event stream immediately
+  initRealtimeBus();
+
+  // 2. Check session or pending request
   const user = getCurrentUser();
 
   if (isAppUnlocked() && user) {
@@ -1612,6 +1750,7 @@ document.addEventListener('DOMContentLoaded', () => {
       checkPendingApprovalOnLoad(pendingId);
     } else {
       document.getElementById('securityGate').style.display = 'flex';
+      catchUpSyncHistory();
     }
   }
 

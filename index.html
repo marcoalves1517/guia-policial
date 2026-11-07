@@ -20,7 +20,7 @@
   <link rel="apple-touch-icon" href="icon-192.png">
 
   <!-- Stylesheet -->
-  <link rel="stylesheet" href="styles.css?v=6.0">
+  <link rel="stylesheet" href="styles.css?v=7.0">
 </head>
 <body>
 
@@ -481,18 +481,21 @@
           </div>
 
           <div class="settings-row" style="margin-top: 24px; padding-top: 16px; border-top: 1px solid var(--border-color);">
-            <label class="settings-label">Estado da Base de Dados Cloud (Tempo Real)</label>
+            <label class="settings-label">Estado da Sincronização em Tempo Real (Direto 0.3s)</label>
             <div style="background: rgba(16, 185, 129, 0.1); border: 1px solid rgba(16, 185, 129, 0.3); border-radius: var(--radius-sm); padding: 12px; margin-bottom: 12px;">
               <div style="font-size: 0.85rem; font-weight: 700; color: #34d399; display: flex; align-items: center;">
-                <span class="live-pulse"></span> Servidor Cloud Operacional
+                <span class="live-pulse"></span> Barramento em Tempo Real Ativo
               </div>
               <div style="font-size: 0.75rem; color: var(--text-secondary); margin-top: 4px;">
-                Permite que os pedidos feitos nos telemóveis dos colegas apareçam imediatamente neste painel e sejam aprovados com 1 clique.
+                Ligação ultrarrápida via SSE (< 0.5s) sem limites de pedidos. Os pedidos dos colegas aparecem imediatamente no PC e o telemóvel entra sozinho logo que aprovares!
               </div>
             </div>
-            <label class="settings-label">Endpoint de Nuvem Ativo</label>
+            <label class="settings-label">Canal de Sincronização Ativo</label>
             <input type="text" id="adminCloudSyncUrl" class="form-input" readonly style="opacity: 0.85; font-size: 0.75rem; font-family: monospace;">
-            <button class="btn-secondary" style="margin-top: 8px;" onclick="manualAdminRefresh()">Testar Ligação Agora</button>
+            <div style="display: flex; gap: 8px; margin-top: 8px;">
+              <button class="btn-secondary" style="flex: 1;" onclick="manualAdminRefresh()">Atualizar em Direto</button>
+              <button class="btn-secondary" style="flex: 1;" onclick="playAlertChime()">🔔 Testar Som de Alerta</button>
+            </div>
           </div>
         </div>
       </div>
@@ -547,6 +550,6 @@
   </div>
 
   <!-- App Script -->
-  <script src="app.js?v=6.0"></script>
+  <script src="app.js?v=7.0"></script>
 </body>
 </html>
