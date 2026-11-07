@@ -1129,7 +1129,7 @@ body {
   right: 0;
   bottom: 0;
   background: rgba(0, 0, 0, 0.85);
-  z-index: 120;
+  z-index: 1500;
   display: none;
   backdrop-filter: blur(4px);
   overflow-y: auto;
@@ -1408,7 +1408,7 @@ body {
   right: 0;
   bottom: 0;
   background: rgba(0, 0, 0, 0.7);
-  z-index: 150;
+  z-index: 2000;
   display: none;
   align-items: center;
   justify-content: center;

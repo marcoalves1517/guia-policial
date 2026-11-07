@@ -1,14 +1,14 @@
 // Guia de Expediente Policial - Core Logic & Real-Time Cloud Engine
 
 // =========================================================================
-// 1. AUTO-UPDATE, ANTI-CACHE & DB RESET ENGINE (v8.0.0)
+// 1. AUTO-UPDATE, ANTI-CACHE & DB RESET ENGINE (v8.1.0)
 // =========================================================================
-const CURRENT_APP_VERSION = 'v8.0.0';
+const CURRENT_APP_VERSION = 'v8.1.0';
 (function autoUpdateCheck() {
   try {
     const storedVersion = localStorage.getItem('opc_app_version');
-    if (storedVersion && storedVersion !== CURRENT_APP_VERSION) {
-      console.log('Nova versão v8.0 detetada! A limpar bases de dados e atualizar cache...');
+    if (storedVersion !== CURRENT_APP_VERSION) {
+      console.log('Nova versão v8.1 detetada! A limpar bases de dados e atualizar cache...');
       localStorage.setItem('opc_app_version', CURRENT_APP_VERSION);
       // Clean DBs on update to start fresh as requested:
       localStorage.removeItem('opc_users_db');
@@ -20,6 +20,7 @@ const CURRENT_APP_VERSION = 'v8.0.0';
       localStorage.removeItem('opc_sync_topic');
       localStorage.removeItem('opc_expedientes_data');
       localStorage.removeItem('opc_artigos_data');
+      localStorage.setItem('opc_v8_admin_reset_done', 'yes');
       if ('caches' in window) {
         caches.keys().then((keys) => {
           return Promise.all(keys.map(k => caches.delete(k)));
@@ -29,7 +30,6 @@ const CURRENT_APP_VERSION = 'v8.0.0';
         return;
       }
     }
-    localStorage.setItem('opc_app_version', CURRENT_APP_VERSION);
   } catch (err) {
     console.warn('Erro na verificação de versão:', err);
   }
@@ -453,7 +453,7 @@ function applyUserSession(user) {
 }
 
 // ---------------------------------------------------------------------
-// Gate Views, Setup Modal & Unified Login
+// Gate Views, Setup & Unified Login
 // ---------------------------------------------------------------------
 
 function switchGateView(view) {
@@ -461,15 +461,21 @@ function switchGateView(view) {
   const loginPanel = document.getElementById('gateViewLogin');
   const reqPanel = document.getElementById('gateViewRequest');
   const waitPanel = document.getElementById('gateViewWaiting');
+  const setupPanel = document.getElementById('gateViewSetup');
 
   if (loginPanel) loginPanel.classList.remove('active');
   if (reqPanel) reqPanel.classList.remove('active');
   if (waitPanel) waitPanel.classList.remove('active');
+  if (setupPanel) setupPanel.classList.remove('active');
 
   if (view === 'login' && loginPanel) {
     loginPanel.classList.add('active');
     const input = document.getElementById('unifiedLoginInput');
     if (input) setTimeout(() => input.focus(), 100);
+  } else if (view === 'setup' && setupPanel) {
+    setupPanel.classList.add('active');
+    const p1 = document.getElementById('setupNewAdminPass');
+    if (p1) setTimeout(() => p1.focus(), 100);
   } else if (view === 'request' && reqPanel) {
     reqPanel.classList.add('active');
     const firstInput = document.getElementById('reqName');
@@ -515,39 +521,33 @@ function updateAdminSetupBanner() {
 }
 
 function openAdminSetupModal() {
-  const modal = document.getElementById('adminSetupModal');
-  if (modal) {
-    modal.style.display = 'flex';
-    const input = document.getElementById('setupNewAdminPass');
-    if (input) setTimeout(() => input.focus(), 150);
-  }
+  switchGateView('setup');
 }
 
 function closeAdminSetupModal() {
-  const modal = document.getElementById('adminSetupModal');
-  if (modal) modal.style.display = 'none';
+  switchGateView('login');
 }
 
 function closeAdminSetupOnBackdrop(e) {
-  if (e.target.id === 'adminSetupModal') closeAdminSetupModal();
+  switchGateView('login');
 }
 
 function handleAdminSetupSubmit(e) {
   e.preventDefault();
+  hideGateMessages();
   const p1 = (document.getElementById('setupNewAdminPass').value || '').trim();
   const p2 = (document.getElementById('setupNewAdminPassConfirm').value || '').trim();
 
   if (!p1) {
-    alert('A senha de Administrador não pode estar em branco.');
+    showGateError('A senha de Administrador não pode estar em branco.');
     return;
   }
   if (p1 !== p2) {
-    alert('As senhas introduzidas não coincidem.');
+    showGateError('As senhas introduzidas não coincidem.');
     return;
   }
 
   localStorage.setItem('opc_admin_password', p1);
-  closeAdminSetupModal();
   updateAdminSetupBanner();
 
   const adminUser = {
@@ -568,9 +568,10 @@ async function handleUnifiedLogin(e) {
 
   const adminPass = getAdminPassword();
 
-  // If no admin password has been set yet, prompt setup
+  // If no admin password has been set yet, go directly to setup
   if (!adminPass) {
-    openAdminSetupModal();
+    switchGateView('setup');
+    showGateSuccess('Primeiro Acesso: Por favor crie a sua palavra-passe de Administrador abaixo.');
     return;
   }
 
@@ -1999,6 +2000,14 @@ function startSessionGuard(user) {
 }
 
 document.addEventListener('DOMContentLoaded', () => {
+  // 0. Ensure clean admin password state on v8.1
+  if (localStorage.getItem('opc_v8_admin_reset_done') !== 'yes') {
+    localStorage.removeItem('opc_admin_password');
+    localStorage.removeItem('opc_unlocked');
+    localStorage.removeItem('opc_current_user');
+    localStorage.setItem('opc_v8_admin_reset_done', 'yes');
+  }
+
   // 1. Update Admin setup banner status
   updateAdminSetupBanner();
 
@@ -2020,7 +2029,13 @@ document.addEventListener('DOMContentLoaded', () => {
     } else {
       const gate = document.getElementById('securityGate');
       if (gate) gate.style.display = 'flex';
-      switchGateView('login');
+      
+      // If admin password is not set yet, show setup view immediately!
+      if (!getAdminPassword()) {
+        switchGateView('setup');
+      } else {
+        switchGateView('login');
+      }
       catchUpSyncHistory();
     }
   }
